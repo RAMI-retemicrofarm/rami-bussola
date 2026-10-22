@@ -1,0 +1,5 @@
+# .husky/pre-commit — prima di ogni commit: file toccati puliti e tipi a posto. I test girano in CI e a fine tappa.
+# Il repo del progetto ha `codice/` in una sottocartella, e Husky parte dalla radice del repo.
+cd codice
+npx lint-staged
+npm run --silent typecheck --if-present

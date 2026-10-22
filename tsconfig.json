@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // Le E2E passano funzioni a `page.evaluate`, che girano nel browser: per questo c'è anche il DOM.
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["vitest.config.ts", "playwright.config.ts", "sito/e2e"]
+}

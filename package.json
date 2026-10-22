@@ -1,0 +1,44 @@
+{
+  "name": "rami-bussola",
+  "private": true,
+  "type": "module",
+  "description": "La Bussola di RAMI APS: la vetrina su Cloudflare Pages e il motore in Google Apps Script.",
+  "license": "MIT",
+  "engines": {
+    "node": "^24.22.0"
+  },
+  "workspaces": [
+    "condiviso",
+    "motore",
+    "sito"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w sito",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write .",
+    "typecheck": "tsc -p . && tsc -p condiviso && tsc -p motore && tsc -p motore/tsconfig.node.json && tsc -p sito",
+    "test": "vitest run",
+    "build": "npm run build -w motore && npm run build -w sito",
+    "e2e": "playwright test",
+    "prepare": "cd .. && husky codice/.husky"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^24.19.2",
+    "eslint": "^10.13.0",
+    "eslint-config-prettier": "^10.1.8",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
+    "prettier": "^3.9.10",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^5.0.5"
+  },
+  "allowScripts": {
+    "esbuild": false,
+    "fsevents": false,
+    "workerd": false
+  }
+}

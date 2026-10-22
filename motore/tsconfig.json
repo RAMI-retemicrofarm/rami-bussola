@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2020"],
+    "types": ["google-apps-script"]
+  },
+  "include": ["src"],
+  // I test girano in Node, con i servizi di Google finti: li controlla tsconfig.node.json.
+  "exclude": ["src/**/*.test.ts"]
+}

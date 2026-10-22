@@ -1,0 +1,7 @@
+# .prettierignore — i documenti sono scritti a mano, a capo a 120 colonne: Prettier allineerebbe le tabelle con gli
+# spazi e metterebbe righe vuote prima degli elenchi. Ciò che sta nel .gitignore Prettier lo salta già da sé.
+docs/
+*.md
+# generati, ma nel repo: i tipi di wrangler si rifanno con `npm run typegen -w sito`
+package-lock.json
+sito/worker-configuration.d.ts

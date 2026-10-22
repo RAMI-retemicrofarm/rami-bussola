@@ -1,0 +1,22 @@
+# dipendenze e build
+node_modules/
+dist/
+coverage/
+.wrangler/
+playwright-report/
+test-results/
+
+# segreti: mai nel repo. I valori del motore stanno nelle proprietà dello script, quelli di wrangler in .dev.vars
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+.clasprc.json
+
+# locali
+.DS_Store
+*.log
+.vscode/*
+!.vscode/launch.json
+.idea/

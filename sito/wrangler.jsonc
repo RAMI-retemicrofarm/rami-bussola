@@ -1,0 +1,21 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "rami-bussola",
+  "compatibility_date": "2026-10-18",
+  "pages_build_output_dir": "./dist",
+  "compatibility_flags": ["nodejs_compat"],
+  // Cloudflare Access (ADR 0001): il team di RAMI e l'Application Audience (AUD) tag dell'applicazione «rami-bussola»,
+  // una sola per rami-bussola.pages.dev e le anteprime (21/10/2026). Se sono vuoti, su pages.dev la Function rifiuta tutto.
+  // L'AUD non è un segreto: sta in chiaro in ogni JWT di Access. gitleaks lo scambia per una chiave, da cui l'eccezione.
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "steep-term-d727.cloudflareaccess.com",
+    "ACCESS_AUD": "a7fa5eacee8f5aaf2becba79219efcd5b694690e777147f68fa4faf9cc9323b5", // gitleaks:allow
+  },
+  // Il KV dell'account di RAMI, creato il 21/10/2026; in locale wrangler usa un KV finto con lo stesso id.
+  "kv_namespaces": [
+    {
+      "binding": "BUSSOLA",
+      "id": "b51a4d7e5a774150adb822ef5a12de5d",
+    },
+  ],
+}

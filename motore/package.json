@@ -1,0 +1,17 @@
+{
+  "name": "@bussola/motore",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.ts",
+    "seed:local": "node scripts/seed-local.ts"
+  },
+  "dependencies": {
+    "@bussola/condiviso": "*"
+  },
+  "devDependencies": {
+    "@google/clasp": "^3.4.1",
+    "@types/google-apps-script": "^2.0.13",
+    "esbuild": "^0.28.2"
+  }
+}
