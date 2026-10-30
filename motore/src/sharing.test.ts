@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEMO_EMAILS, demoSheets } from './demo.ts'
-import { SOCI_SHEETS } from './members.ts'
+import { OFFICE_ADDRESS, SOCI_SHEETS } from './members.ts'
 import { memoryState, memoryWorkbook } from './memory.ts'
 import {
   readSharingReport,
@@ -71,7 +71,7 @@ describe('runSharingCheck', () => {
       ],
     })
   const everyone = [
-    'segreteria@example.org',
+    'amministratore.bussola@example.org',
     'rossana@example.org',
     DEMO_EMAILS.keeper,
     DEMO_EMAILS.board,
@@ -80,7 +80,7 @@ describe('runSharingCheck', () => {
   const deps = (change: Partial<SharingCheckDeps> = {}): SharingCheckDeps => ({
     soci: soci(),
     content: () => memoryWorkbook(demoSheets(new Date('2026-11-05T09:00:00Z'))),
-    owner: 'segreteria@example.org',
+    owner: 'amministratore.bussola@example.org',
     sociSheet: item({ editors: everyone }),
     bussolaFolder: item({ where: SHARING_PLACES.bussolaFolder, viewers: everyone }),
     libroFolder: item({ where: SHARING_PLACES.libroFolder, viewers: everyone }),
@@ -99,6 +99,19 @@ describe('runSharingCheck', () => {
       { where: 'la cartella «Bussola»', account: 'ugo@example.org', access: 'lettura' },
       { where: 'la cartella «Libro soci»', account: 'ugo@example.org', access: 'lettura' },
     ])
+  })
+
+  it('l’indirizzo della segreteria passa anche se non è in «Accessi»: il motore gira con un altro account (ADR 0004)', () => {
+    expect(OFFICE_ADDRESS).toBe('segreteria@retemicrofarm.it')
+    const office = [' Segreteria@RETEMICROFARM.it']
+    const report = runSharingCheck(
+      deps({
+        sociSheet: item({ editors: office }),
+        bussolaFolder: item({ where: SHARING_PLACES.bussolaFolder, editors: office }),
+        libroFolder: item({ where: SHARING_PLACES.libroFolder, viewers: office }),
+      }),
+    )
+    expect(report.findings).toEqual([])
   })
 
   it('salva il risultato con la data, e la vista lo rilegge', () => {

@@ -73,6 +73,27 @@ describe('il dominio dei soci, senza Access', () => {
     expect(html).toMatch(/il tuo nome e ciò che scrivi, per sapere chi ha fatto l’aggiornamento/)
   })
 
+  it('l’informativa nomina ciò che chiede il Modulo degli impegni a chi propone, e che nome e mail restano su Google', async () => {
+    const html = (await (await request(`${MEMBERS}/privacy`).res).text()).replace(/\s+/g, ' ')
+    expect(html).toContain(
+      'Se proponi un impegno dal Modulo, il tuo nome e cognome, il numero di socio e la mail, per sapere chi l’ha ' +
+        'proposto e scriverti sulla scheda.',
+    )
+    expect(html).toContain(
+      'Nome, cognome e mail restano nel Foglio della Bussola, su Google, che leggono la segreteria e chi cura la ' +
+        'Bussola: non vanno sul sito né nella Riservata.',
+    )
+    expect(html).toContain(
+      '<li>Nome, cognome e mail di chi propone un impegno: 2 anni dalla proposta, come le risposte ai Moduli.</li>',
+    )
+  })
+
+  it('l’informativa dice che i Fogli sono dell’account della Bussola, non della segreteria (ADR 0004)', async () => {
+    const html = (await (await request(`${MEMBERS}/privacy`).res).text()).replace(/\s+/g, ' ')
+    expect(html).toContain('l’anagrafica, le quote e i pagamenti, in un Foglio dell’account della Bussola.')
+    expect(html).not.toContain('account della segreteria')
+  })
+
   it('l’informativa dice che Google e Cloudflare sono società degli Stati Uniti, e su cosa si basa il trasferimento', async () => {
     const html = (await (await request(`${MEMBERS}/privacy`).res).text()).replace(/\s+/g, ' ')
     expect(html).toContain('Google e Cloudflare sono società degli Stati Uniti')

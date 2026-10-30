@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "node build.ts",
-    "seed:local": "node scripts/seed-local.ts"
+    "seed:local": "node scripts/seed-local.ts",
+    "seed:anteprima": "node scripts/seed-local.ts --remote"
   },
   "dependencies": {
     "@bussola/condiviso": "*"

@@ -7,6 +7,7 @@ import {
   paymentMethodCell,
   paymentStatusCell,
   readAccess,
+  readBankLines,
   readDayMonth,
   readMembers,
   readOfficeSettings,
@@ -170,6 +171,7 @@ describe('readMembers', () => {
         phone: '333 1234567',
         type: 'producer',
         admittedOn: '2020-03-01',
+        resolution: 'D-1',
         leftOn: '',
       },
       {
@@ -181,6 +183,7 @@ describe('readMembers', () => {
         phone: '',
         type: 'supporter',
         admittedOn: '2021-05-05',
+        resolution: '',
         leftOn: '2025-12-31',
       },
       {
@@ -192,6 +195,7 @@ describe('readMembers', () => {
         phone: '',
         type: '',
         admittedOn: '',
+        resolution: '',
         leftOn: '',
       },
     ])
@@ -312,5 +316,48 @@ describe('readPayments', () => {
     expect(paymentMethodCell('transfer')).toBe('bonifico')
     expect(paymentMethodCell('register')).toBe('libro soci')
     expect(paymentStatusCell('pendingTreasurer')).toBe('in attesa del tesoriere')
+  })
+})
+
+describe('readBankLines', () => {
+  it('legge le righe di «Estratto conto» senza fermarsi: ciò che non si legge resta vuoto', () => {
+    const lines = readBankLines(
+      table(SOCI_SHEETS.bank, [
+        [new Date('2026-11-02T00:00:00+01:00'), 30, 'Quota socio n. 2', 'TRN 8842', 'P-2026-0016', ''],
+        ['03/11/2026', '1.230,50', 'Bonifico', '', '', ''],
+        ['ieri', 'trenta', 'Quota', '', '', 'la data non si legge'],
+        ['', '', '', '', '', ''],
+      ]),
+      romeDate,
+    )
+    expect(lines).toEqual([
+      {
+        index: 1,
+        date: '2026-11-02',
+        amount: 30,
+        reason: 'Quota socio n. 2',
+        reference: 'TRN 8842',
+        matchedTo: 'P-2026-0016',
+        ignoredWhy: '',
+      },
+      {
+        index: 2,
+        date: '2026-11-03',
+        amount: 1230.5,
+        reason: 'Bonifico',
+        reference: '',
+        matchedTo: '',
+        ignoredWhy: '',
+      },
+      {
+        index: 3,
+        date: '',
+        amount: null,
+        reason: 'Quota',
+        reference: '',
+        matchedTo: '',
+        ignoredWhy: 'la data non si legge',
+      },
+    ])
   })
 })

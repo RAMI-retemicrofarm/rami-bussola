@@ -87,3 +87,13 @@ export function freshProjects(projects: readonly { updatedOn: CalendarDate | nul
   const open = projects.length
   return { fresh, open, percent: open ? Math.round((fresh / open) * 100) : null }
 }
+
+/** «Cosa succede»: i cantieri aggiornati più di recente, quelli mai aggiornati in fondo. */
+export function recentlyUpdated<T extends { title: string; updatedOn: CalendarDate | null }>(
+  projects: readonly T[],
+  count = 3,
+): T[] {
+  return [...projects]
+    .sort((a, b) => (b.updatedOn ?? '').localeCompare(a.updatedOn ?? '') || a.title.localeCompare(b.title, 'it'))
+    .slice(0, count)
+}

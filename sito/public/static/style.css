@@ -265,6 +265,11 @@ dl.dati dd {
   min-width: 0;
 }
 
+/* I testi liberi della scheda di un impegno: gli a capo scritti nel Modulo restano, senza HTML. */
+.testo-libero {
+  white-space: pre-line;
+}
+
 .riga {
   padding: 10px 0;
   border-bottom: 1px solid var(--rule);
@@ -446,7 +451,8 @@ main li {
   margin-top: 20px;
 }
 
-/* I salti dell'informativa: link sottolineati, alti 44 px, a capo quando non ci stanno. */
+/* I salti dell'informativa e della Riservata: link sottolineati, almeno 44 × 44 px anche se corti come «Soci», a capo
+   quando non ci stanno. */
 nav.salti {
   display: flex;
   flex-wrap: wrap;
@@ -457,6 +463,152 @@ nav.salti {
 nav.salti a {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  min-width: 44px;
   min-height: 44px;
   font-weight: 700;
+}
+
+/* Dopo un salto il titolo non resta attaccato al bordo dello schermo. */
+h2[id] {
+  scroll-margin-top: 16px;
+}
+
+/* Da T7. Una voce che si tocca: un link a tutta riga, alto almeno 44 px, sottolineato come i link. Senza indirizzo è
+   uno span, con lo stesso posto. */
+.voce {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 44px;
+  padding: 6px 0;
+  font-weight: 700;
+}
+
+.card > a.voce + a.voce,
+.riga + a.voce {
+  margin-top: 8px;
+}
+
+/* Le quattro domande della Home: ogni domanda è una voce, con sotto dove sta la risposta. */
+ul.domande,
+ul.elenco,
+ol.passo-passo {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+ul.domande li {
+  margin: 0 0 8px;
+}
+
+a.voce.domanda {
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  padding: 10px 16px;
+  text-decoration: none;
+  font-size: 18px;
+}
+
+a.voce.domanda .small {
+  font-weight: 400;
+}
+
+/* La data dell'incontro, prima del tasto «Entra su Meet». */
+.quando {
+  font-weight: 700;
+  font-size: 18px;
+  margin: 0 0 4px;
+}
+
+.quando::first-letter {
+  text-transform: uppercase;
+}
+
+ul.elenco > li {
+  margin: 0 0 10px;
+}
+
+ul.elenco.card > li {
+  margin: 0;
+}
+
+ul.elenco.card > li + li {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+}
+
+ol.passo-passo > li h2 {
+  margin-top: 0;
+}
+
+/* I filtri dei cantieri: link a capo quando non ci stanno, quello scelto col bordo pieno e il grassetto. */
+nav.filtri {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+nav.filtri a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--line-ui);
+  border-radius: 22px;
+  background: var(--card);
+  color: var(--brand);
+  text-decoration: none;
+  font-size: 15px;
+}
+
+nav.filtri a[aria-current='page'] {
+  border: 2px solid var(--brand);
+  background: var(--brand-tint);
+  font-weight: 800;
+}
+
+/* La ricerca: l'etichetta sopra, il campo e il tasto sulla stessa riga finché ci stanno. */
+form.cerca {
+  margin: 26px 0 10px;
+}
+
+form.cerca label {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.cerca-riga {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.cerca-riga input {
+  flex: 1 1 10rem;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 2px solid var(--line-ui);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+}
+
+.cerca-riga .btn.mini {
+  margin: 0;
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+ul.referenti {
+  margin-bottom: 8px;
 }

@@ -1,9 +1,11 @@
 // Il controllo delle condivisioni, ogni giorno (cartamodello, «Il controllo automatico»): il Foglio soci e la cartella
 // «Bussola» contro l'elenco di chi legge il Foglio soci; la cartella «Libro soci» contro lo stesso elenco più il
 // Direttivo. Ciò che è fuori dall'elenco va in «Oggi» del segretario, con l'account. Drive entra già letto (google.ts).
+// L'indirizzo della segreteria è nell'elenco anche se non è in «Accessi»: la cartella «Bussola» sta nel Drive di RAMI,
+// mentre il motore gira con l'account della Bussola (ADR 0004).
 import { normalizeEmail, type CalendarDate } from '@bussola/condiviso'
 import { readPeople, readTable, SHEETS, type Workbook } from './content.ts'
-import { readAccess, readOfficeSettings, SOCI_SHEETS } from './members.ts'
+import { OFFICE_ADDRESS, readAccess, readOfficeSettings, SOCI_SHEETS } from './members.ts'
 import type { SharingFinding } from './office-api.ts'
 import type { PublishState } from './publish.ts'
 
@@ -51,7 +53,7 @@ export type SharingCheckDeps = {
   soci: Workbook
   /** Il Foglio contenuti, per il Direttivo: si apre solo se c'è la cartella «Libro soci». */
   content: () => Workbook
-  /** L'account dello script, proprietario del Foglio soci. */
+  /** L'account dello script, quello della Bussola: il proprietario del Foglio soci. */
   owner: string
   sociSheet: SharedItem
   bussolaFolder: SharedItem
@@ -67,6 +69,7 @@ export function runSharingCheck(deps: SharingCheckDeps): SharingReport {
   const settings = readOfficeSettings(readTable(deps.soci, SOCI_SHEETS.settings), () => '')
   const readers = new Set([
     normalizeEmail(deps.owner),
+    OFFICE_ADDRESS,
     ...access.filter((row) => row.enters && row.email).map((row) => row.email),
     ...settings.readers,
   ])

@@ -188,6 +188,25 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 /* Il riquadro di avviso: bordo e fondo tenue, e la parola in grassetto davanti. */
 .avviso { margin: 8px 0 0; padding: 10px 12px; border-left: 4px solid var(--warn); border-radius: 0 10px 10px 0; background: var(--warn-tint); }
 
+/* «Altre N nei prossimi 30 giorni»: un tasto come gli altri, da 44 px. */
+details.altre { margin: 8px 0 0; }
+details.altre summary {
+  display: flex; align-items: center; min-height: 44px; padding: 0 8px; margin: 0 -8px; cursor: pointer;
+  color: var(--brand); font-weight: 700; list-style: none;
+}
+details.altre summary::-webkit-details-marker { display: none; }
+details.altre summary::before { content: "›" / ""; display: inline-block; margin-right: 8px; transition: transform .15s; }
+details.altre[open] summary::before { transform: rotate(90deg); }
+details.altre[open] summary { margin-bottom: 8px; }
+
+/* «Oggi»: le righe di «Da controllare» e di «Salute», e i tasti piccoli in fila. */
+.lista { margin: 0; padding: 0 0 0 20px; }
+.lista li { margin: 0 0 6px; }
+.riga .azioni { margin-top: 6px; }
+.riga .stato { margin: 4px 0 0; }
+.importa textarea { font-size: 15px; min-height: 120px; }
+input[type="file"] { display: block; width: 100%; max-width: 100%; min-width: 0; margin: 0 0 8px; font: inherit; font-size: 15px; }
+
 /* Lo scheletro: c'è subito, mentre il motore si sveglia. */
 .scheletro i { display: block; height: 64px; margin: 0 0 10px; border-radius: 14px; background: #ece4d3; }
 
@@ -291,6 +310,142 @@ export const OFFICE_PAGE_WORDS = String.raw`
   function noAccessText(email) {
     const rest = "se il telefono ne ha più di uno, esci da Google e rientra con quello giusto. Se è già quello giusto, scrivi a " + KEEPER + "."
     return email ? "Stai usando l'account " + email + ". Entra con quello della segreteria: " + rest : "Entra con l'account della segreteria: " + rest
+  }
+
+  // --- Le parole di «Oggi» e di Pagamenti (T4)
+  const EMPTY = {
+    toMatch: "Niente da abbinare: banca e registro tornano.",
+    toCheck: "Niente da controllare.",
+    pending: "Nessun pagamento in attesa del tesoriere.",
+    cash: "Nessun contante da consegnare.",
+    deadlines: "Nessuna scadenza nei prossimi 30 giorni.",
+    health: "«Salute» è vuota: il motore non ha ancora fatto un giro.",
+  }
+  // Oltre questi giorni senza registrazioni «Oggi» va in rosso, a parole.
+  const LAST_RECORDING_DAYS = 7
+  const KIND = { call: "Bando", duty: "Adempimento", tax: "Fiscale", event: "Evento", assembly: "Assemblea", measure: "Misura" }
+  function days(n) {
+    return n === 1 ? "1 giorno" : n + " giorni"
+  }
+  function plural(n, one, many) {
+    return n === 1 ? one : many
+  }
+  // L'ultima registrazione, come [testo, colore, forma]: in rosso e a parole oltre i 7 giorni.
+  function lastRecordingLine(last) {
+    if (!last) return ["Nessun pagamento registrato finora.", "warn", "dot"]
+    const when = last.daysAgo === 0 ? "oggi" : last.daysAgo === 1 ? "ieri" : days(last.daysAgo) + " fa"
+    if (last.daysAgo > LAST_RECORDING_DAYS)
+      return ["Nessuna registrazione da " + days(last.daysAgo) + ": l'ultima è " + last.id + " del " + dmy(last.on) + ".", "bad", "tri"]
+    return ["Ultima registrazione: " + last.id + " del " + dmy(last.on) + ", " + when + ".", "ok", "dot pieno"]
+  }
+  // La riga dei rinnovi: verde oltre il bersaglio, se no gialla.
+  function renewalsLine(r, label) {
+    return r && r.percent > 92 ? [label, "ok", "dot pieno"] : [label, "warn", "dot"]
+  }
+  // Il ritardo o l'attesa di una scadenza, come [testo, colore, forma]; null se non c'è niente da dire.
+  function deadlineLine(d) {
+    if (d.lateByDays !== null) return ["In ritardo di " + days(d.lateByDays), "bad", "tri"]
+    if (d.overdueByDays !== null) return ["Passata da " + days(d.overdueByDays), "warn", "dot"]
+    if (d.daysLeft === 0) return ["Oggi", "warn", "dot"]
+    if (d.daysLeft === 1) return ["Domani", "warn", "dot"]
+    return ["Fra " + days(d.daysLeft), "muto", "dot"]
+  }
+  function deadlineWhen(d) {
+    return KIND[d.kind] + " · " + dmy(d.dueOn)
+  }
+  function ownerText(role) {
+    return role ? "Segue: " + role : "Nessuno la segue"
+  }
+  // Una voce di «Da abbinare», in una frase.
+  function toMatchText(item) {
+    if (item.kind === "bankWithoutPayment") {
+      const who = item.memberNumber ? " · nella causale: socio n. " + item.memberNumber : ""
+      return bankLineText(item.line) + " Nessuna registrazione" + who + "."
+    }
+    const p = item.payment
+    const what = p.id + ", " + euro(p.amount) + (p.date ? " del " + dmy(p.date) : "")
+    if (item.kind === "paymentWithoutBank") return what + ": bonifico registrato " + days(item.daysAgo) + " fa, in banca non c'è."
+    return what + ": registrato senza socio" + (p.reference ? ", rif. " + p.reference : "") + "."
+  }
+  // Le righe della banca messe da parte: le iscrizioni al Raduno e quelle che chi registra ha segnato «Non è una quota».
+  function setAsideCountText(kind, n) {
+    return (kind === "raduno" ? "Iscrizioni al Raduno: " : "Non sono quote: ") + n
+  }
+  // Ognuna dice la sua via d'uscita: il Raduno si recupera col riferimento o con la causale, il motivo a mano
+  // cancellandolo. La vista si ricalcola a ogni apertura.
+  function setAsideNoteText(kind) {
+    return kind === "raduno"
+      ? "Chi si iscrive al Raduno paga con un bonifico a parte: queste righe non sono quote e non si abbinano. Se una è una quota, registrala con «Registra un pagamento» e lo stesso riferimento; se non ha riferimento, nel Foglio soci apri la scheda «Estratto conto» e correggi la causale: torna fra le quote alla prossima apertura della Bussola."
+      : "Le ha segnate chi registra. Se ti sbagli, nel Foglio soci apri la scheda «Estratto conto» e cancella la cella della colonna «ignorato perché» di quella riga: la riga torna in «Da abbinare» alla prossima apertura della Bussola."
+  }
+  // La riga di sintesi dell'estratto conto: ciò che è abbinato e ciò che è da parte, perché il conto torni. L'ultima
+  // data sta in una frase sua: in coda all'elenco sembrerebbe la data dell'ultima voce.
+  function bankSummaryText(bank, matched) {
+    if (!bank.lines) return "Nessuna riga della banca finora."
+    const parts = [bank.lines + " " + plural(bank.lines, "riga", "righe") + " in «Estratto conto»", matched + " " + plural(matched, "abbinata", "abbinate")]
+    if (bank.outflows) parts.push(bank.outflows + " " + plural(bank.outflows, "uscita", "uscite"))
+    if (bank.raduno.length) parts.push(bank.raduno.length + " " + plural(bank.raduno.length, "iscrizione", "iscrizioni") + " al Raduno")
+    if (bank.notDues.length) parts.push(bank.notDues.length + " " + plural(bank.notDues.length, "che non è una quota", "che non sono quote"))
+    return parts.join(", ") + "." + (bank.lastDate ? " Ultima riga: " + dmy(bank.lastDate) + "." : "")
+  }
+  function bankLineText(l) {
+    return "In banca il " + dmy(l.date) + ": " + euro(l.amount) + ", «" + l.reason + "»" + (l.reference ? ", rif. " + l.reference : "") + "."
+  }
+  // Col motivo, la riga del Foglio (l'intestazione è la riga 1): se il motivo è sbagliato, è la cella da svuotare.
+  function setAsideText(item, withWhy) {
+    return bankLineText(item.line) + (withWhy ? " Motivo: " + item.why + " (riga " + (item.line.index + 1) + ")." : "")
+  }
+  function notDuesDoneText(l, reason) {
+    return "La riga del " + dmy(l.date) + " da " + euro(l.amount) + " ora è fra quelle che non sono quote: «" + reason + "»."
+  }
+  function cashTotalText(cash) {
+    const n = cash.payments.length
+    return n ? n + " " + plural(n, "pagamento", "pagamenti") + " in contanti da consegnare: " + euro(cash.total) : EMPTY.cash
+  }
+  function pendingCountText(n) {
+    return n ? n + " " + plural(n, "pagamento", "pagamenti") + " in attesa del tesoriere" : EMPTY.pending
+  }
+  function toMatchCountText(n) {
+    return n ? n + " da abbinare" : EMPTY.toMatch
+  }
+  // Il libro soci nel Drive: la data dell'ultimo, e se la copia non è riuscita.
+  function registerText(r) {
+    return r.savedOn ? "Ultimo libro soci nel Drive: " + dmy(r.savedOn) + "." : "Nessun libro soci nel Drive finora: il primo si fa il primo del mese, o con «Salva nel Drive»."
+  }
+  function registerWarning(r) {
+    if (!r.failedOn || (r.savedOn && r.savedOn > r.failedOn)) return ""
+    return "La copia del " + dmy(r.failedOn) + " non è riuscita: " + r.error + ". Riprova con «Salva nel Drive»; se non va, avvisa " + KEEPER + "."
+  }
+  // La pubblicazione dei numeri dei soci sulla Riservata, quando KV non risponde.
+  function publicationWarning(p) {
+    if (!p.pendingSince) return ""
+    return "I numeri dei soci non arrivano alla Riservata dal " + dmy(p.pendingSince) + ": riprovo a ogni giro. " + p.error
+  }
+  // Una riga di «Salute»: lo stato come colore e forma.
+  function healthMark(status) {
+    const s = String(status || "").toLowerCase()
+    if (s === "a posto") return ["ok", "dot pieno"]
+    if (s === "ferma") return ["bad", "tri"]
+    return ["warn", "dot"]
+  }
+  function healthWhen(h) {
+    const parts = []
+    if (h.checkedOn) parts.push("controllato " + h.checkedOn)
+    if (h.updatedOn) parts.push("aggiornato " + h.updatedOn)
+    return parts.join(" · ")
+  }
+  // --- Le parole degli impegni (T6)
+  // «Impegni da scrivere: 2»: le righe preparate dalla segreteria che aspettano la scheda; vuota senza la scheda.
+  function commitmentsToWriteText(n) {
+    return n === null || n === undefined ? "" : "Impegni da scrivere: " + n
+  }
+  const COMMITMENTS_HINT = "Quando il Coordinamento dice che un impegno serve, aggiungi la riga nella scheda «Impegni» del Foglio contenuti: chi lo propone completa la scheda col Modulo «Proponi un impegno»."
+  function importedText(r) {
+    const parts = [r.added + " " + plural(r.added, "riga nuova", "righe nuove")]
+    if (r.matched) parts.push(r.matched + " " + plural(r.matched, "abbinata", "abbinate"))
+    if (r.ignored) parts.push(r.ignored + " " + plural(r.ignored, "ignorata", "ignorate"))
+    if (r.alreadyPasted) parts.push(r.alreadyPasted + " già " + plural(r.alreadyPasted, "incollata, scartata", "incollate, scartate"))
+    return "Estratto conto importato: " + parts.join(", ") + "."
   }
 `
 
@@ -424,15 +579,26 @@ const SCRIPT =
   function back(onclick) {
     return h("button", { type: "button", class: "indietro", onclick }, "‹ Indietro")
   }
+  // Ciò che in «Oggi» è in rosso: le condivisioni fuori dall'elenco, gli adempimenti in ritardo, le registrazioni
+  // ferme, i numeri che non arrivano alla Riservata, la copia del libro soci non riuscita.
+  function attentionCount(v) {
+    const d = v.dashboard
+    let n = d.access ? d.access.sharing.length : 0
+    n += d.deadlines.filter((x) => x.lateByDays !== null).length
+    if (d.lastRecording && d.lastRecording.daysAgo > LAST_RECORDING_DAYS) n++
+    if (publicationWarning(d.publication)) n++
+    if (registerWarning(d.register)) n++
+    return n
+  }
   function tabs(current) {
-    if (!state.view || !state.view.todayForSecretary) return null
+    if (!state.view) return null
     const tab = (name, label, open, extra) =>
       h("button", { type: "button", "aria-current": current === name ? "page" : null, onclick: () => open(true) }, label, extra)
-    // Le condivisioni fuori dall'elenco si vedono anche da Soci: parola e forma, non solo il colore.
-    const n = state.view.todayForSecretary.sharing.length
+    // Ciò che è da guardare si vede anche da Soci: parola e forma, non solo il colore.
+    const n = attentionCount(state.view)
     // Su una riga sua, sotto «Oggi»: il punto lo legge solo il lettore di schermo, così a capo non resta appeso.
     const todo = n ? [h("span", { class: "vh" }, " · "), stato("span", "warn", "tri", n + " da guardare")] : null
-    return h("nav", { class: "sezioni", "aria-label": "Sezioni della segreteria" }, tab("soci", "Soci", showSoci), tab("oggi", "Oggi", showOggi, todo))
+    return h("nav", { class: "sezioni", "aria-label": "Sezioni della segreteria" }, tab("soci", "Soci", showSoci), tab("pagamenti", "Pagamenti", showPagamenti), tab("oggi", "Oggi", showOggi, todo))
   }
   // «Sei [nome] · Cambia» e «Registri come [nome] · Cambia»: il punto va col tasto, così a capo non resta appeso al nome.
   function changeWho(onclick) {
@@ -501,6 +667,20 @@ const SCRIPT =
     ], true)
   }
 
+  // I quattro numeri e il totale: in Soci e in «Oggi», uguali.
+  function countsBlock(v) {
+    const c = v.counts
+    const number = (n, color, label) => h("div", { class: "card" }, h("b", { class: color }, String(n)), label)
+    return [
+      h("div", { class: "numeri" },
+        number(c.inGoodStanding, "ok", "In regola"),
+        number(c.dueForRenewal, "warn", "Da rinnovare"),
+        number(c.notInGoodStanding, "bad", "Non in regola"),
+        number(c.paidAhead, "ok", "Già in regola per il " + (v.year + 1))),
+      h("p", { class: "totale" }, "Soci non receduti: " + c.members + " · receduti: " + c.left),
+    ]
+  }
+
   // --- Soci: l'elenco si costruisce una volta per vista; la ricerca e i filtri accendono e spengono le righe.
   function buildSoci() {
     const v = state.view
@@ -537,16 +717,9 @@ const SCRIPT =
       found.textContent = shown === 1 ? "1 socio" : shown + " soci"
     }
     search.addEventListener("input", () => { state.query = search.value; apply() })
-    const c = v.counts
-    const number = (n, color, label) => h("div", { class: "card" }, h("b", { class: color }, String(n)), label)
     const nodes = [
       h("h1", null, "Soci"),
-      h("div", { class: "numeri" },
-        number(c.inGoodStanding, "ok", "In regola"),
-        number(c.dueForRenewal, "warn", "Da rinnovare"),
-        number(c.notInGoodStanding, "bad", "Non in regola"),
-        number(c.paidAhead, "ok", "Già in regola per il " + (v.year + 1))),
-      h("p", { class: "totale" }, "Soci non receduti: " + c.members + " · receduti: " + c.left),
+      countsBlock(v),
       h("p", { class: "small" }, "Chi è in regola si calcola dai pagamenti registrati: nessuno lo scrive a mano."),
       h("button", { type: "button", class: "btn", onclick: () => startDraft(null, () => showSoci(true)) }, "Registra un pagamento"),
       h("div", { class: "campo" },
@@ -598,16 +771,58 @@ const SCRIPT =
     if (p.method === "cash") rows.push(["Chi incassa", p.collectedBy || "Non indicato"])
     const by = p.recordedBy ? "Registrato da " + p.recordedBy + (p.recordedOn ? " il " + dmy(p.recordedOn) : "") : p.recordedOn ? "Registrato il " + dmy(p.recordedOn) : ""
     const canAct = state.view.canRecord && p.status !== "cancelled"
+    const after = (message) => (r) => {
+      if (r.kind === "done") { setView(r.view); return showMember(m.number, message(r)) }
+      showMember(m.number)
+      fieldError($main.querySelector("#errore-generale") || errorSlot("errore-generale"), null, r.message || "Non è andata: riprova fra un momento.")
+    }
+    const actions = [...confirmActions(p, m ? fullName(m) : "", after)]
+    if (canAct) actions.push(
+      h("button", { type: "button", class: "btn mini sec", "aria-describedby": id, onclick: () => showCancel(m, p) }, "Annulla il pagamento"),
+      h("button", { type: "button", class: "btn mini sec", "aria-describedby": id, onclick: () => showChangeYear(m, p) }, "Cambia l'anno"))
     return h("article", { class: "card", "aria-labelledby": id },
       h("h3", { id }, p.id),
       p.status === "cancelled" ? stato("p", "muto", "linea", "Annullato") : null,
       p.status === "pendingTreasurer" ? stato("p", "warn", "dot mezzo", "In attesa del tesoriere") : null,
+      cashStato(p),
       dati(rows),
       by ? h("p", { class: "small" }, by) : null,
       p.note ? h("p", { class: "nota" }, p.note) : null,
-      canAct ? h("div", { class: "azioni" },
-        h("button", { type: "button", class: "btn mini sec", "aria-describedby": id, onclick: () => showCancel(m, p) }, "Annulla il pagamento"),
-        h("button", { type: "button", class: "btn mini sec", "aria-describedby": id, onclick: () => showChangeYear(m, p) }, "Cambia l'anno")) : null)
+      actions.length ? h("div", { class: "azioni" }, actions) : null)
+  }
+  // I contanti: ricevuti, o ancora da consegnare a chi può confermare.
+  function cashStato(p) {
+    if (p.method !== "cash" || p.status === "cancelled") return null
+    return p.cashReceivedOn ? stato("p", "ok", "dot pieno", "Contanti ricevuti il " + dmy(p.cashReceivedOn)) : stato("p", "warn", "dot", "Contanti da consegnare")
+  }
+  // «Conferma» e «Ricevuti»: solo con «può confermare pagamenti»; «Conferma» mai su un pagamento registrato da sé.
+  // «after(message)» dà il gestore dell'esito, con la frase da mostrare.
+  function confirmActions(p, name, after, prefix) {
+    const v = state.view
+    const actions = []
+    if (!v.canConfirm || p.status === "cancelled") return actions
+    const id = (prefix || "pagamento-") + p.id
+    const label = p.id + (name ? " di " + name : "")
+    if (p.status === "pendingTreasurer" && p.recordedBy !== state.person)
+      actions.push(h("button", { type: "button", class: "btn mini", "aria-describedby": id, onclick: (e) => {
+        call("officeConfirmPayment", { person: state.person, paymentId: p.id }, {
+          button: e.currentTarget, wait: "Confermo…",
+          ok: after(() => "Pagamento " + label + " confermato: conta da adesso."),
+          fail: changeFailedTo(after, "confermato"),
+        })
+      } }, "Conferma"))
+    if (p.method === "cash" && !p.cashReceivedOn)
+      actions.push(h("button", { type: "button", class: "btn mini sec", "aria-describedby": id, onclick: (e) => {
+        call("officeCashReceived", { person: state.person, paymentId: p.id }, {
+          button: e.currentTarget, wait: "Segno…",
+          ok: after(() => "Contanti di " + label + " ricevuti."),
+          fail: changeFailedTo(after, "segnato"),
+        })
+      } }, "Ricevuti"))
+    return actions
+  }
+  function changeFailedTo(after, what) {
+    return (e) => after(() => "")({ kind: "failed", message: e.offline ? OFFLINE : "Non siamo sicuri che sia stato " + what + ". Riprova: se è già fatto, non cambia niente." })
   }
   function paymentLine(p, m) {
     return p.id + " · " + fullName(m) + " · " + euro(p.amount) + " per il " + p.validYear + (p.date ? " · " + METHOD[p.method] + " del " + dmy(p.date) : "")
@@ -684,18 +899,20 @@ const SCRIPT =
   }
 
   // --- Registra un pagamento: una schermata, sei campi. Ciò che si scrive resta in «draft» finché non è registrato.
-  function startDraft(member, onBack) {
+  // «prefill»: da una riga della banca in «Da abbinare», importo, data e riferimento già scritti.
+  function startDraft(member, onBack, prefill) {
     const v = state.view
+    const pre = prefill || {}
     state.draft = {
       requestKey: "",
       keyFor: "",
       member: member ? { number: member.number, name: fullName(member) } : null,
       noMember: false,
       search: "",
-      amount: String(v.amount),
+      amount: pre.amount !== undefined ? String(pre.amount) : String(v.amount),
       method: "transfer",
-      date: v.today,
-      reference: "",
+      date: pre.date || v.today,
+      reference: pre.reference || "",
       collectedBy: v.person,
       note: "",
       back: onBack,
@@ -942,41 +1159,358 @@ const SCRIPT =
     ], true)
   }
 
-  // --- Oggi, per il segretario: i cambi in «Accessi» e le condivisioni fuori dall'elenco.
-  function showOggi(focus) {
-    const t = state.view.todayForSecretary
-    if (!t) return showSoci(focus)
-    const changes = t.accessChanges.length
-      ? h("div", { class: "card" }, t.accessChanges.map((c) => h("p", { class: "riga" }, accessChangeText(c))))
-      : h("p", null, "Nessun cambio negli ultimi 30 giorni.")
-    const warning = sharingWarning(t.sharingCheckedOn, state.view.today)
-    let sharing = null
-    if (t.sharing.length) sharing = [
-      h("div", { class: "card" }, t.sharing.map((s) => h("div", { class: "riga" },
-        h("p", { class: "etichetta" }, capital(s.where)),
-        h("p", null, s.account),
-        stato("p", "bad", "tri", s.access === "modifica" ? "Fuori dall'elenco, può modificare" : "Fuori dall'elenco, può leggere"),
-        h("p", null, revokeAdvice(s))))),
-      h("p", { class: "small" }, "Ultimo controllo: " + dmy(t.sharingCheckedOn) + "."),
-    ]
-    else if (t.sharingCheckedOn) sharing = h("p", null, "Nessuna condivisione fuori dall'elenco. Ultimo controllo: " + dmy(t.sharingCheckedOn) + ".")
+  // --- Un messaggio di esito in cima a una schermata, letto dal lettore di schermo.
+  function statusLine(message) {
+    return message ? h("p", { class: "stato ok", role: "status" }, h("span", { class: "dot pieno", "aria-hidden": "true" }), message) : null
+  }
+  function nameOf(number) {
+    const m = state.view.members.find((x) => x.number === number)
+    return m ? fullName(m) : ""
+  }
+
+  // --- Le scadenze: cosa, tipo e data, il ritardo a parole, chi la segue, «Fatta».
+  function deadlineRow(d, then) {
+    const id = "scadenza-" + d.id
+    const [text, color, shape] = deadlineLine(d)
+    const done = h("button", { type: "button", class: "btn mini sec", "aria-describedby": id, onclick: (e) => {
+      if (d.measureObjective) return showMeasure(d, then)
+      call("officeDeadlineDone", { person: state.person, deadlineId: d.id }, {
+        button: e.currentTarget, wait: "Segno…",
+        ok: (r) => {
+          if (r.kind === "done") { setView(r.view); return then("«" + d.what + "» segnata fatta il " + dmy(state.view.today) + ".") }
+          then("", r.message || "Non è andata: riprova fra un momento.")
+        },
+        fail: (e) => then("", e.offline ? OFFLINE : "Non siamo sicuri che sia stata segnata. Riprova: se è già fatta, non cambia niente."),
+      })
+    } }, "Fatta")
+    return h("div", { class: "riga" },
+      h("p", { class: "etichetta", id }, d.what),
+      h("p", { class: "small" }, deadlineWhen(d)),
+      stato("p", color, shape, text),
+      d.ownerRole ? h("p", null, ownerText(d.ownerRole)) : stato("p", "bad", "tri", ownerText("")),
+      h("div", { class: "azioni" }, done))
+  }
+  // La misura del mese: il numero, poi «Fatta».
+  function showMeasure(d, then) {
+    const err = errorSlot("errore-misura")
+    const general = errorSlot("errore-generale")
+    const input = h("input", { type: "text", id: "misura", inputmode: "numeric", autocomplete: "off", "aria-describedby": "misura-aiuto errore-misura" })
+    const slot = slowSlot()
+    const button = h("button", { type: "submit", class: "btn" }, "Segna fatta")
+    const form = h("form", { novalidate: true, onsubmit: (e) => {
+      e.preventDefault()
+      err.textContent = general.textContent = ""
+      const value = input.value.trim()
+      if (!/^\d+$/.test(value)) return fieldError(err, input, "Scrivi un numero intero, anche 0.")
+      call("officeDeadlineDone", { person: state.person, deadlineId: d.id, measure: value }, {
+        button, slot,
+        ok: (r) => {
+          if (r.kind === "done") { setView(r.view); return then("«" + d.what + "» segnata fatta: " + value + " nella scheda «Misure».") }
+          if (r.kind === "invalid") return fieldError(err, input, r.message)
+          fieldError(general, null, r.message || "Non è andata: riprova fra un momento.")
+        },
+        fail: (e) => fieldError(general, null, e.offline ? OFFLINE : "Non siamo sicuri che sia stata segnata. Riprova: se è già fatta, non cambia niente."),
+      })
+    } },
+      h("div", { class: "campo" },
+        h("label", { for: "misura" }, "Quanti messaggi sono senza risposta da più di 5 giorni?"),
+        h("p", { class: "hint", id: "misura-aiuto" }, "Mail della segreteria e Instagram insieme. Il numero va nella scheda «Misure», riga " + d.measureObjective + "."),
+        input, err),
+      general, button, slot,
+      h("button", { type: "button", class: "btn sec", onclick: () => then("") }, "Torna indietro"))
+    show([back(() => then("")), h("h1", null, d.what), h("p", { class: "sub" }, deadlineWhen(d)), form], true)
+  }
+
+  // --- Oggi: i numeri, i pagamenti da seguire, le scadenze, gli impegni da scrivere (T6), «Da controllare», «Salute», il libro soci, gli accessi.
+  function showOggi(focus, message, problem) {
+    const v = state.view
+    const d = v.dashboard
+    const then = (text, error) => showOggi(true, text, error)
+    const general = errorSlot("errore-generale")
+    if (problem) general.textContent = problem
+    const [lastText, lastColor, lastShape] = lastRecordingLine(d.lastRecording)
+    const late = d.deadlines.filter((x) => x.daysLeft < 0)
+    const upcoming = d.deadlines.filter((x) => x.daysLeft >= 0)
+    const next = upcoming.slice(0, 3)
+    const rest = upcoming.slice(3)
+    const publication = publicationWarning(d.publication)
+    const registerProblem = registerWarning(d.register)
+    const saveButton = h("button", { type: "button", class: "btn mini sec", onclick: (e) => {
+      call("officeSaveRegister", { person: state.person }, {
+        button: e.currentTarget, wait: "Salvo…",
+        ok: (r) => {
+          if (r.kind === "done") { setView(r.view); return then("Libro soci salvato nel Drive: «Libro soci al " + state.view.today + "».") }
+          then("", r.message || "Non è andata: riprova fra un momento.")
+        },
+        fail: (e) => then("", e.offline ? OFFLINE : "Non siamo sicuri che sia stato salvato. Guarda la cartella «Libro soci» prima di riprovare."),
+      })
+    } }, "Salva nel Drive")
+    const toPayments = (label) => h("button", { type: "button", class: "collegamento", onclick: () => showPagamenti(true) }, label)
+    let access = null
+    if (d.access) {
+      const t = d.access
+      const changes = t.accessChanges.length
+        ? h("div", { class: "card" }, t.accessChanges.map((c) => h("p", { class: "riga" }, accessChangeText(c))))
+        : h("p", null, "Nessun cambio negli ultimi 30 giorni.")
+      const warning = sharingWarning(t.sharingCheckedOn, v.today)
+      let sharing = null
+      if (t.sharing.length) sharing = [
+        h("div", { class: "card" }, t.sharing.map((s) => h("div", { class: "riga" },
+          h("p", { class: "etichetta" }, capital(s.where)),
+          h("p", null, s.account),
+          stato("p", "bad", "tri", s.access === "modifica" ? "Fuori dall'elenco, può modificare" : "Fuori dall'elenco, può leggere"),
+          h("p", null, revokeAdvice(s))))),
+        h("p", { class: "small" }, "Ultimo controllo: " + dmy(t.sharingCheckedOn) + "."),
+      ]
+      else if (t.sharingCheckedOn) sharing = h("p", null, "Nessuna condivisione fuori dall'elenco. Ultimo controllo: " + dmy(t.sharingCheckedOn) + ".")
+      access = [
+        h("h2", null, "Cambi in «Accessi» negli ultimi 30 giorni"),
+        changes,
+        h("h2", null, "Condivisioni fuori dall'elenco"),
+        warning ? stato("p", "warn", "tri", warning) : null,
+        sharing,
+      ]
+    }
     show([
       tabs("oggi"),
       h("h1", null, "Oggi"),
-      h("h2", null, "Cambi in «Accessi» negli ultimi 30 giorni"),
-      changes,
-      h("h2", null, "Condivisioni fuori dall'elenco"),
-      warning ? stato("p", "warn", "tri", warning) : null,
-      sharing,
-    ], focus)
+      statusLine(message),
+      general,
+      countsBlock(v),
+      d.renewals ? stato("p", renewalsLine(d.renewals, d.renewalsLabel)[1], renewalsLine(d.renewals, d.renewalsLabel)[2], d.renewalsLabel) : null,
+      h("h2", null, "Pagamenti da seguire"),
+      h("div", { class: "card" },
+        h("p", { class: "riga" }, toMatchCountText(d.toMatch.length), d.toMatch.length ? [" · ", toPayments("Vai a Pagamenti")] : null),
+        h("p", { class: "riga" }, pendingCountText(d.pendingTreasurer.length), d.pendingTreasurer.length ? [" · ", toPayments("Vai a Pagamenti")] : null),
+        h("p", { class: "riga" }, cashTotalText(d.cashToDeliver), d.cashToDeliver.payments.length ? [" · ", toPayments("Vai a Pagamenti")] : null),
+        stato("p", lastColor, lastShape, lastText)),
+      h("h2", null, "Prossime scadenze"),
+      d.contentProblem ? stato("p", "warn", "tri", d.contentProblem) : null,
+      h("div", { class: "card" },
+        late.length ? [h("p", { class: "etichetta" }, "In ritardo"), late.map((x) => deadlineRow(x, then))] : null,
+        late.length && next.length ? h("p", { class: "etichetta" }, "Le prossime") : null,
+        next.length ? next.map((x) => deadlineRow(x, then)) : (late.length ? null : h("p", null, EMPTY.deadlines)),
+        rest.length ? h("details", { class: "altre" }, h("summary", null, "Altre " + rest.length + " nei prossimi 30 giorni"), rest.map((x) => deadlineRow(x, then))) : null),
+      d.commitmentsToWrite === null || d.commitmentsToWrite === undefined ? null : [
+        h("h2", null, "Impegni"),
+        h("p", null, commitmentsToWriteText(d.commitmentsToWrite)),
+        h("p", { class: "small" }, COMMITMENTS_HINT)],
+      h("h2", null, "Da controllare"),
+      d.toCheck.length ? h("ul", { class: "lista" }, d.toCheck.map((x) => h("li", null, x))) : h("p", null, EMPTY.toCheck),
+      h("h2", null, "Salute"),
+      publication ? stato("p", "bad", "tri", publication) : null,
+      d.health.length ? h("div", { class: "card" }, d.health.map((x) => {
+        const [color, shape] = healthMark(x.status)
+        return h("div", { class: "riga" },
+          h("p", { class: "etichetta" }, x.piece),
+          stato("p", color, shape, x.status || "senza stato"),
+          healthWhen(x) ? h("p", { class: "small" }, healthWhen(x)) : null,
+          x.note ? h("p", { class: "nota" }, x.note) : null)
+      })) : h("p", null, d.contentProblem ? d.contentProblem : EMPTY.health),
+      h("h2", null, "Libro soci nel Drive"),
+      h("p", null, registerText(d.register)),
+      registerProblem ? stato("p", "bad", "tri", registerProblem) : null,
+      h("div", { class: "azioni" }, saveButton, d.register.url ? h("a", { class: "btn mini sec", href: d.register.url, target: "_blank", rel: "noopener" }, "Apri l'ultimo") : null),
+      access,
+    ], message || problem ? (message ? $main.querySelector('[role="status"]') : general) : focus)
     showSei(() => showOggi(true))
+  }
+
+  // --- Pagamenti: da abbinare, in attesa del tesoriere, contanti da consegnare, l'estratto conto.
+  function showPagamenti(focus, message, problem) {
+    const v = state.view
+    const d = v.dashboard
+    const then = (text, error) => showPagamenti(true, text, error)
+    const general = errorSlot("errore-generale")
+    if (problem) general.textContent = problem
+    const after = (label) => (r) => {
+      if (r.kind === "done") { setView(r.view); return then(label(r)) }
+      then("", r.message || "Non è andata: riprova fra un momento.")
+    }
+    // Lo stesso pagamento può stare in due elenchi (in attesa e in contanti): ogni elenco ha i suoi id.
+    const card = (prefix) => (p) => {
+      const id = prefix + p.id
+      const rows = [["Socio", p.memberName ? p.memberName + " · n. " + p.memberNumber : "Senza socio"], ["Vale per", "il " + p.validYear], ["Importo", euro(p.amount)], ["Data", dmy(p.date) || "Senza data"], ["Modo", METHOD_NAME[p.method] || p.method]]
+      if (p.method === "cash") rows.push(["Chi incassa", p.collectedBy || "Non indicato"])
+      const by = p.recordedBy ? "Registrato da " + p.recordedBy + (p.recordedOn ? " il " + dmy(p.recordedOn) : "") : ""
+      const actions = confirmActions(p, p.memberName, after, prefix)
+      return h("article", { class: "card", "aria-labelledby": id },
+        h("h3", { id }, p.id),
+        p.status === "pendingTreasurer" ? stato("p", "warn", "dot mezzo", "In attesa del tesoriere") : null,
+        cashStato(p),
+        dati(rows),
+        by ? h("p", { class: "small" }, by) : null,
+        actions.length ? h("div", { class: "azioni" }, actions) : null)
+    }
+    const toMatchRow = (item, i) => {
+      // Il testo della riga dà il contesto ai tasti: senza, chi non vede la riga sente tasti tutti uguali.
+      const id = "da-abbinare-" + i
+      let action = null
+      if (item.kind === "bankWithoutPayment") {
+        const m = item.memberNumber ? v.members.find((x) => x.number === item.memberNumber) : null
+        action = [h("button", { type: "button", class: "btn mini sec", "aria-describedby": id, onclick: () => startDraft(m || null, () => showPagamenti(true), { amount: item.line.amount, date: item.line.date, reference: item.line.reference }) }, "Registra questo bonifico")]
+        // Raduno pagato insieme ad altro, donazioni, magliette, bandi: spetta a chi importa l'estratto conto.
+        if (v.canRecord) action.push(h("button", { type: "button", class: "btn mini sec", "aria-describedby": id, onclick: () => showNotDues(item) }, "Non è una quota"))
+      } else if (item.kind === "paymentWithoutMember")
+        action = h("button", { type: "button", class: "btn mini sec", "aria-describedby": id, onclick: () => showAssign(item.payment) }, "Abbina a un socio")
+      return h("div", { class: "riga" }, h("p", { id }, toMatchText(item)), action ? h("div", { class: "azioni" }, action) : null)
+    }
+    // Le righe messe da parte, ognuna col suo conteggio: sono già sistemate, quindi chiuse; si aprono se serve. Il
+    // Raduno senza motivo (è il titolo), le altre col motivo.
+    const setAside = (kind, items) => items.length ? h("details", { class: "altre" },
+      h("summary", null, setAsideCountText(kind, items.length)),
+      h("p", { class: "small" }, setAsideNoteText(kind)),
+      h("div", { class: "card" }, items.map((item) => h("div", { class: "riga" }, h("p", null, setAsideText(item, kind === "notDues")))))) : null
+    const importBox = v.canRecord ? importForm(then) : h("p", { class: "small" }, "L'estratto conto lo importa chi può registrare pagamenti.")
+    show([
+      tabs("pagamenti"),
+      h("h1", null, "Pagamenti"),
+      statusLine(message),
+      general,
+      h("button", { type: "button", class: "btn", onclick: () => startDraft(null, () => showPagamenti(true)) }, "Registra un pagamento"),
+      h("h2", null, "Da abbinare"),
+      d.toMatch.length ? h("div", { class: "card" }, d.toMatch.map(toMatchRow)) : h("p", null, EMPTY.toMatch),
+      h("h2", null, "In attesa del tesoriere"),
+      d.pendingTreasurer.length ? d.pendingTreasurer.map(card("attesa-")) : h("p", null, EMPTY.pending),
+      h("h2", null, "Contanti da consegnare"),
+      h("p", { class: "totale" }, cashTotalText(d.cashToDeliver)),
+      d.cashToDeliver.payments.map(card("contanti-")),
+      h("h2", null, "Estratto conto"),
+      h("p", null, bankSummaryText(d.bank, d.matchedLines)),
+      // Il modulo prima degli elenchi: con molte iscrizioni al Raduno finirebbe in fondo a una pagina lunghissima.
+      importBox,
+      setAside("raduno", d.bank.raduno),
+      setAside("notDues", d.bank.notDues),
+    ], message || problem ? (message ? $main.querySelector('[role="status"]') : general) : focus)
+    showSei(() => showPagamenti(true))
+  }
+  // Le righe della banca: incollate, o dal file CSV scelto, che si legge sul telefono e si manda come testo.
+  function importForm(then) {
+    const err = errorSlot("errore-banca")
+    const general = errorSlot("errore-importa")
+    const area = h("textarea", { id: "banca", rows: "5", "aria-describedby": "banca-aiuto errore-banca" })
+    const file = h("input", { type: "file", id: "banca-file", accept: ".csv,.txt,text/csv,text/plain", "aria-describedby": "banca-file-aiuto" })
+    file.addEventListener("change", () => {
+      const chosen = file.files && file.files[0]
+      if (!chosen) return
+      const reader = new FileReader()
+      reader.onload = () => { area.value = String(reader.result || ""); err.textContent = "" }
+      reader.onerror = () => fieldError(err, area, "Il file non si legge: incolla le righe qui sotto.")
+      reader.readAsText(chosen)
+    })
+    const slot = slowSlot()
+    const button = h("button", { type: "submit", class: "btn sec" }, "Importa")
+    return h("form", { class: "importa", novalidate: true, onsubmit: (e) => {
+      e.preventDefault()
+      err.textContent = general.textContent = ""
+      if (!area.value.trim()) return fieldError(err, area, "Incolla le righe della banca, o scegli il file CSV.")
+      call("officeImportBank", { person: state.person, text: area.value }, {
+        button, slot, wait: "Importo…",
+        ok: (r) => {
+          if (r.kind === "imported") { setView(r.view); return then(importedText(r)) }
+          if (r.kind === "invalid") return fieldError(err, area, r.message)
+          fieldError(general, null, r.message || "Non è andata: riprova fra un momento.")
+        },
+        fail: (e) => fieldError(general, null, e.offline ? OFFLINE : "Non siamo sicuri che sia stato importato. Riprova: le righe già entrate si scartano."),
+      })
+    } },
+      h("div", { class: "campo" },
+        h("label", { for: "banca-file" }, "Il CSV della banca"),
+        h("p", { class: "hint", id: "banca-file-aiuto" }, "Scegli il file scaricato dalla banca: le righe finiscono qui sotto."),
+        file),
+      h("div", { class: "campo" },
+        h("label", { for: "banca" }, "Oppure incolla le righe"),
+        h("p", { class: "hint", id: "banca-aiuto" }, "Data, importo, causale e riferimento, come le copi dal foglio o dal CSV. Le righe già incollate si scartano."),
+        area, err),
+      general, button, slot)
+  }
+  // «Non è una quota»: la riga della banca va fra quelle che non sono quote, col motivo, e non si abbina più.
+  function showNotDues(item) {
+    const l = item.line
+    const err = errorSlot("errore-motivo")
+    const general = errorSlot("errore-generale")
+    // Senza maxlength: il browser taglierebbe in silenzio; il limite lo dice l'aiuto, e l'errore se si supera.
+    const reason = h("input", { type: "text", id: "motivo", autocomplete: "off", required: true, "aria-describedby": "motivo-aiuto errore-motivo" })
+    reason.addEventListener("input", () => { reason.removeAttribute("aria-invalid"); err.textContent = "" })
+    const slot = slowSlot()
+    const button = h("button", { type: "submit", class: "btn" }, "Sì, non è una quota")
+    const form = h("form", { novalidate: true, onsubmit: (e) => {
+      e.preventDefault()
+      err.textContent = general.textContent = ""
+      const text = reason.value.trim()
+      if (!text) return fieldError(err, reason, "Scrivi il motivo, per esempio «donazione» o «magliette».")
+      call("officeIgnoreBankLine", { person: state.person, line: { index: l.index, date: l.date, amount: l.amount, reason: l.reason, reference: l.reference }, reason: text }, {
+        button, slot,
+        ok: (r) => {
+          if (r.kind === "done") { setView(r.view); return showPagamenti(true, notDuesDoneText(l, text)) }
+          if (r.kind === "invalid" && r.field === "reason") return fieldError(err, reason, r.message)
+          fieldError(general, null, r.message || "Non è andata: riprova fra un momento.")
+        },
+        fail: changeFailed(general, "segnato"),
+      })
+    } },
+      h("div", { class: "campo" },
+        h("label", { for: "motivo" }, "Motivo (obbligatorio)"),
+        h("p", { class: "hint", id: "motivo-aiuto" }, "Poche parole, al massimo 100 segni: per esempio «donazione», «magliette», «bando»."),
+        reason, err),
+      general, button, slot,
+      h("button", { type: "button", class: "btn sec", onclick: () => showPagamenti(true) }, "No, torna a Pagamenti"))
+    show([
+      back(() => showPagamenti(true)),
+      h("h1", null, "Non è una quota?"),
+      h("p", null, toMatchText(item)),
+      h("p", { class: "small" }, "La riga resta nell'estratto conto, fra quelle che non sono quote, col motivo. Non si abbina più a un pagamento: se ti sbagli, nel Foglio soci apri la scheda «Estratto conto» e cancella la cella della colonna «ignorato perché» di quella riga. La riga torna in «Da abbinare» alla prossima apertura della Bussola."),
+      form,
+    ], true)
+  }
+  // «Abbina a un socio»: si cerca il socio come nel modulo, e il pagamento prende il suo numero.
+  function showAssign(p) {
+    const v = state.view
+    const err = errorSlot("errore-member")
+    const general = errorSlot("errore-generale")
+    const search = h("input", { type: "search", id: "socio", autocomplete: "off", "aria-describedby": "socio-aiuto errore-member" })
+    const list = h("ul", { class: "proposte" })
+    const none = h("p", { "aria-live": "polite" })
+    const slot = slowSlot()
+    const choose = (m) => (e) => {
+      err.textContent = general.textContent = ""
+      call("officeAssignMember", { person: state.person, paymentId: p.id, memberNumber: m.number }, {
+        button: e.currentTarget, slot, wait: "Abbino…",
+        ok: (r) => {
+          if (r.kind === "done") { setView(r.view); return showPagamenti(true, p.id + " abbinato a " + fullName(m) + (r.mail === "sent" ? ". Ho mandato la ricevuta." : "")) }
+          fieldError(r.kind === "invalid" && r.field === "member" ? err : general, null, r.message || "Non è andata: riprova fra un momento.")
+        },
+        fail: (e) => fieldError(general, null, e.offline ? OFFLINE : "Non siamo sicuri che sia stato abbinato. Riprova: se è già fatto, non cambia niente."),
+      })
+    }
+    const update = () => {
+      const query = tokens(search.value)
+      const found = query.length ? v.members.filter((m, i) => matches(i, query)).slice(0, 8) : []
+      list.replaceChildren(...found.map((m) => h("li", null, h("button", { type: "button", class: "proposta", onclick: choose(m) }, fullName(m) + " · numero " + m.number))))
+      none.textContent = query.length && !found.length ? "Nessun socio con «" + search.value.trim() + "». Prova col numero socio o solo col cognome." : ""
+    }
+    search.addEventListener("input", () => { err.textContent = ""; update() })
+    show([
+      back(() => showPagamenti(true)),
+      h("h1", null, "Abbina a un socio"),
+      h("p", null, toMatchText({ kind: "paymentWithoutMember", payment: p })),
+      h("p", { class: "small" }, "Conta subito solo se chi l'ha registrato e tu avete «può registrare pagamenti»; se no va in attesa del tesoriere."),
+      h("div", { class: "campo" },
+        h("label", { for: "socio" }, "Socio"),
+        h("p", { class: "hint", id: "socio-aiuto" }, "Cerca per cognome o numero socio, poi toccalo nell'elenco."),
+        search, list, none, err),
+      general, slot,
+    ], search)
   }
 
   open()
 })()
 `
 
-/** La pagina intera. Il motore la passa a HtmlService con titolo e riga viewport (HtmlService toglie i meta tag). */
+/**
+ * La pagina intera. Il motore la passa a HtmlService con titolo e riga viewport (HtmlService toglie i meta tag). La
+ * fascia sta nell'header con la testata, come nella Riservata: chi si muove fra i landmark la incontra.
+ */
 export function officePageHtml(): string {
   return `<!doctype html>
 <html lang="it">
@@ -986,8 +1520,8 @@ export function officePageHtml(): string {
 <style>${CSS}</style>
 </head>
 <body>
-<header class="testata"><p class="marchio"><svg ${ICON}><circle cx="12" cy="12" r="10"/><path d="M15.5 8.5l-2 5-5 2 2-5z" fill="currentColor"/></svg>Bussola · RAMI</p><p id="sei" class="sei" hidden></p></header>
-<div class="stanza"><svg ${ICON}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Solo segretario, segreteria part-time e tesoriere</div>
+<header><div class="testata"><p class="marchio"><svg ${ICON}><circle cx="12" cy="12" r="10"/><path d="M15.5 8.5l-2 5-5 2 2-5z" fill="currentColor"/></svg>Bussola · RAMI</p><p id="sei" class="sei" hidden></p></div>
+<div class="stanza"><svg ${ICON}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Solo segretario, segreteria part-time e tesoriere</div></header>
 <main id="main">
 <h1>Segreteria</h1>
 <p class="sub" role="status">Sto aprendo la segreteria…</p>

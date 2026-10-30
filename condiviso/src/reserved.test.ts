@@ -7,7 +7,14 @@ const snapshot: ReservedSnapshot = {
   version: 1,
   publishedAt: '2026-10-18T19:00:00.000Z',
   staleDays: 30,
-  groups: [{ id: 'GDL-orti', name: 'Orti e Suoli', newProjectUrl: `${FORM}&entry.1=Orti` }],
+  groups: [
+    {
+      id: 'GDL-orti',
+      name: 'Orti e Suoli',
+      newProjectUrl: `${FORM}&entry.1=Orti`,
+      newMeetingUrl: `${FORM.replace('abc', 'inc')}&entry.1=Orti`,
+    },
+  ],
   projects: [
     {
       id: 'CAN-0001',
@@ -54,6 +61,16 @@ const snapshot: ReservedSnapshot = {
     updatedOn: '2026-10-10',
     lines: [{ label: 'Ciclo webinar e corsi', planned: 5000, spent: 1200.5 }],
   },
+  meetings: [
+    {
+      groupId: 'GDL-orti',
+      startsAt: '2026-11-05T18:30',
+      meetUrl: 'https://meet.google.com/abc-defg-hij',
+      membersCanSee: false,
+    },
+  ],
+  commitments: [],
+  commitmentFormUrl: `${FORM.replace('abc', 'imp')}`,
 }
 
 describe('parseReservedSnapshot', () => {
@@ -81,16 +98,27 @@ describe('parseReservedSnapshot', () => {
     expect(parseReservedSnapshot({ ...snapshot, projects: [project] })?.projects[0]?.updateUrl).toBeNull()
   })
 
-  it('un’istantanea di T1, senza scadenze, delibere, questioni e budget, si legge con le sezioni vuote', () => {
-    const { version, publishedAt, staleDays, groups, projects, people } = snapshot
+  it('un’istantanea di T1, senza scadenze, delibere, questioni, budget e incontri, si legge con le sezioni vuote', () => {
+    const { version, publishedAt, staleDays, projects, people } = snapshot
+    const groups = snapshot.groups.map(({ id, name, newProjectUrl }) => ({ id, name, newProjectUrl }))
     const t1 = { version, publishedAt, staleDays, groups, projects, people }
     expect(parseReservedSnapshot(t1)).toEqual({
       ...t1,
+      groups: groups.map((group) => ({ ...group, newMeetingUrl: null })),
       deadlines: [],
       resolutions: [],
       issues: [],
       budget: { updatedOn: null, lines: [] },
+      meetings: [],
+      commitments: [],
+      commitmentFormUrl: null,
     })
+  })
+
+  it('un incontro senza il link di Meet, o senza dire se è visibile ai soci, non passa', () => {
+    const [meeting] = snapshot.meetings
+    const meetings = [meeting, { ...meeting, meetUrl: 'https://zoom.us/j/1' }, { ...meeting, membersCanSee: 'sì' }]
+    expect(parseReservedSnapshot({ ...snapshot, meetings })?.meetings).toEqual([meeting])
   })
 
   it.each([

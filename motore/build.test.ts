@@ -1,13 +1,13 @@
-import { normalizeEmail, romeDate } from '@bussola/condiviso'
+import { normalizeEmail, romeDate, romeDateTime } from '@bussola/condiviso'
 import { createHash } from 'node:crypto'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 import { bundle } from './build.ts'
 import { CALLER_REFUSED } from './src/callers.ts'
 import { SHEETS } from './src/content.ts'
-import { DEMO_CODES, DEMO_EMAILS, demoSheets } from './src/demo.ts'
+import { DEMO_CODES, DEMO_COMMITMENT_ANSWER, DEMO_EMAILS, demoSheets } from './src/demo.ts'
 import { DEMO_OFFICE, DEMO_SHARED_ACCOUNT, demoSociSheets } from './src/demo-soci.ts'
-import { UPDATE_FORM } from './src/form.ts'
+import { COMMITMENT_FORM, MEETING_FORM, NO_COMMITMENT_ROW, UPDATE_FORM } from './src/form.ts'
 import { MEASURES } from './src/measures.ts'
 import { OFFICE_SETTINGS, SOCI_SHEETS } from './src/members.ts'
 import { OFFICE_CALLS, type PaymentInput } from './src/office-api.ts'
@@ -20,18 +20,30 @@ describe('il file unito per Apps Script', () => {
       'checkBounces',
       'checkOfficeSharing',
       'checkSharing',
+      'closeUsage',
       'doGet',
       'everyTenMinutes',
       'migrateMemberRegister',
+      'officeAssignMember',
       'officeCancelPayment',
+      'officeCashReceived',
       'officeChangeYear',
+      'officeConfirmPayment',
+      'officeDeadlineDone',
+      'officeIgnoreBankLine',
+      'officeImportBank',
       'officeOpen',
       'officePreview',
       'officeRecordPayment',
+      'officeSaveRegister',
       'onAccessEdit',
+      'onCommitmentFormSubmit',
+      'onContentEdit',
+      'onMeetingFormSubmit',
       'onUpdateFormSubmit',
       'previewMemberRegister',
       'publishHello',
+      'publishReferents',
       'setupBussola',
       'setupSoci',
     ])
@@ -136,7 +148,7 @@ const Utilities = {
   // Apps Script dà i byte con il segno.
   computeDigest: (_: string, text: string) =>
     [...createHash('sha256').update(text, 'utf8').digest()].map((byte) => (byte > 127 ? byte - 256 : byte)),
-  formatDate: (date: Date) => romeDate(date),
+  formatDate: (date: Date, _: string, format: string) => (format.includes('HH') ? romeDateTime(date) : romeDate(date)),
   getUuid: () => '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d',
 }
 
@@ -158,14 +170,14 @@ function recorder(log: string[], name: string, answers: Record<string, unknown> 
   return self
 }
 
-/** L'account che fa girare lo script: la web app e i trigger sono «Esegui come: io» di segreteria@. */
-const SECRETARY = 'segreteria@example.org'
+/** L'account che fa girare lo script (ADR 0004): web app e trigger sono «Esegui come: io» dell'account della Bussola. */
+const BUSSOLA_ACCOUNT = 'amministratore.bussola@example.org'
 
-/** Session: dall'editor l'account attivo è segreteria@; da `google.script.run` o da un trigger può essere un altro. */
-function fakeSession(active: string = SECRETARY) {
+/** Session: dall'editor l'account attivo è quello della Bussola; da `google.script.run` o da un trigger un altro. */
+function fakeSession(active: string = BUSSOLA_ACCOUNT) {
   return {
     getActiveUser: () => ({ getEmail: () => active }),
-    getEffectiveUser: () => ({ getEmail: () => SECRETARY }),
+    getEffectiveUser: () => ({ getEmail: () => BUSSOLA_ACCOUNT }),
   }
 }
 
@@ -178,8 +190,18 @@ describe('chi può lanciare le funzioni globali', () => {
   // La pagina della segreteria e le sue chiamate rifanno il controllo di «Accessi»: le apre chiunque nel dominio.
   const OPEN = ['doGet', ...OFFICE_CALLS]
   // I gestori dei trigger creati da setupBussola e setupSoci: passano col `triggerUid` giusto, o dall'editor.
-  const TRIGGERS = ['checkOfficeSharing', 'everyTenMinutes', 'onAccessEdit', 'onUpdateFormSubmit']
-  // Le funzioni che si lanciano solo dall'editor, con l'account della segreteria.
+  const TRIGGERS = [
+    'checkOfficeSharing',
+    'closeUsage',
+    'everyTenMinutes',
+    'onAccessEdit',
+    'onCommitmentFormSubmit',
+    'onContentEdit',
+    'onMeetingFormSubmit',
+    'onUpdateFormSubmit',
+    'publishReferents',
+  ]
+  // Le funzioni che si lanciano solo dall'editor, con l'account della Bussola.
   const EDITOR = [
     'checkBounces',
     'checkSharing',
@@ -208,7 +230,13 @@ describe('chi può lanciare le funzioni globali', () => {
     const context: Record<string, unknown> = {
       event: fields && { ...fields, range: beyond, source: beyond },
       Session: fakeSession(active),
-      ScriptApp: { getProjectTriggers: () => fakeTriggers(TRIGGERS), newTrigger: () => beyond },
+      ScriptApp: {
+        getProjectTriggers: () => fakeTriggers(TRIGGERS),
+        newTrigger: () => beyond,
+        deleteTrigger: () => {
+          throw new Error(PASSED)
+        },
+      },
       ...Object.fromEntries(
         [...SERVICES, 'LockService', 'HtmlService', 'MailApp', 'Utilities', 'console'].map((name) => [name, beyond]),
       ),
@@ -250,9 +278,9 @@ describe('chi può lanciare le funzioni globali', () => {
       ])
   })
 
-  it('dall’editor, con l’account della segreteria, passano tutte', async () => {
+  it('dall’editor, con l’account della Bussola, passano tutte', async () => {
     for (const name of [...TRIGGERS, ...EDITOR])
-      expect([name, await call(name, ' Segreteria@Example.org', {})]).toEqual([name, PASSED])
+      expect([name, await call(name, ' Amministratore.Bussola@Example.org', {})]).toEqual([name, PASSED])
   })
 })
 
@@ -260,8 +288,15 @@ describe('un giro del motore nel file unito', () => {
   const now = new Date('2026-10-31T17:50:00Z')
   const sha256Hex = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex')
 
-  async function run() {
+  /** `call`: la globale da lanciare, coi trigger del progetto che la fanno passare. */
+  async function run(
+    call = "everyTenMinutes({ triggerUid: 'uid-everyTenMinutes' })",
+    triggers = ['everyTenMinutes'],
+    withCommitmentForm = false,
+  ) {
     const { code } = await bundle('motore')
+    /** I trigger creati e cancellati dal giro. */
+    const log: string[] = []
     const sheets = demoSheets(now)
     const properties: Record<string, string> = {
       CONTENT_SHEET_ID: 'foglio',
@@ -307,17 +342,50 @@ describe('un giro del motore nel file unito', () => {
         return builder
       },
     }
+    // Il Modulo «Proponi un impegno», con la stesura di prova della scheda e l'elenco delle righe che si riscrive.
+    let rowChoices = [NO_COMMITMENT_ROW]
+    const choiceWrites: string[][] = []
+    const commitmentForm = {
+      getResponses: () => [
+        {
+          getId: () => 'proposta-1',
+          getTimestamp: () => new Date('2026-10-31T17:45:00Z'),
+          getItemResponses: () =>
+            COMMITMENT_FORM.questions
+              .filter((question) => DEMO_COMMITMENT_ANSWER[question.field])
+              .map((question) => ({
+                getItem: () => ({ getTitle: () => question.title }),
+                getResponse: () => DEMO_COMMITMENT_ANSWER[question.field],
+              })),
+        },
+      ],
+      getItems: () =>
+        COMMITMENT_FORM.questions.map((question) => ({
+          getTitle: () => question.title,
+          asListItem: () => ({
+            getChoices: () => rowChoices.map((value) => ({ getValue: () => value })),
+            setChoiceValues: (values: string[]) => void choiceWrites.push((rowChoices = values)),
+          }),
+        })),
+      getPublishedUrl: () => 'https://docs.google.com/forms/d/e/impegni/viewform',
+    }
+    if (withCommitmentForm) properties.COMMITMENT_FORM_ID = 'modulo-impegni'
     const puts: { url: string; payload: string }[] = []
     const context = {
       Date,
       console: { log: () => undefined },
       SpreadsheetApp: { openById: () => fakeSpreadsheet(sheets) },
-      FormApp: { openById: () => form },
+      FormApp: { openById: (id: string) => (id === 'modulo-impegni' ? commitmentForm : form) },
       PropertiesService: fakeProperties(properties),
       LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => undefined }) },
       // Il trigger dei 10 minuti: nessun account attivo, il suo triggerUid.
       Session: fakeSession(''),
-      ScriptApp: { getProjectTriggers: () => fakeTriggers(['everyTenMinutes']) },
+      ScriptApp: {
+        getProjectTriggers: () => fakeTriggers(triggers),
+        newTrigger: (name: string) => recorder(log, `trigger ${name}`),
+        deleteTrigger: (trigger: { getHandlerFunction(): string }) =>
+          void log.push(`cancellato ${trigger.getHandlerFunction()}`),
+      },
       UrlFetchApp: {
         fetch: (url: string, params: { payload: string }) => {
           puts.push({ url, payload: params.payload })
@@ -326,16 +394,49 @@ describe('un giro del motore nel file unito', () => {
       },
       Utilities,
     }
-    runInNewContext(`${code}\neveryTenMinutes({ triggerUid: 'uid-everyTenMinutes' })`, context)
-    return { sheets, puts, properties }
+    runInNewContext(`${code}\n${call}`, context)
+    return { sheets, puts, properties, log, choiceWrites }
   }
 
-  it('applica la risposta del Modulo e pubblica l’istantanea riservata su KV', async () => {
+  /** L'evento onEdit del Foglio contenuti, su una cella della scheda data. */
+  const edit = (sheet: string) =>
+    `onContentEdit({ triggerUid: 'uid-onContentEdit', range: { getSheet: () => ({ getName: () => ${JSON.stringify(sheet)} }) } })`
+
+  it('un cambio in «Referenti» prepara un giro fra un minuto; un’altra scheda aspetta i 10 minuti', async () => {
+    const referents = await run(edit('Referenti'), ['onContentEdit'])
+    expect(referents.puts).toHaveLength(0)
+    expect(referents.log).toContain('trigger publishReferents.after(60000)')
+    expect(referents.log).toContain('trigger publishReferents.create()')
+    const other = await run(edit('Cantieri'), ['onContentEdit'])
+    expect(other.log).toEqual([])
+  })
+
+  it('con un giro già in attesa, un altro cambio in «Referenti» non ne prepara un secondo', async () => {
+    const { log } = await run(edit('Referenti'), ['onContentEdit', 'publishReferents'])
+    expect(log).toEqual([])
+  })
+
+  it('il giro preparato cancella il suo trigger e pubblica le due istantanee', async () => {
+    const { puts, log } = await run("publishReferents({ triggerUid: 'uid-publishReferents' })", ['publishReferents'])
+    expect(log).toEqual(['cancellato publishReferents'])
+    expect(puts.map((put) => decodeURIComponent(put.url.split('/values/')[1] ?? ''))).toEqual([
+      'v1/riservata.json',
+      'v1/sito.json',
+    ])
+  })
+
+  it('applica la risposta del Modulo e pubblica le istantanee riservata e del sito su KV', async () => {
     const { sheets, puts } = await run()
     const projects = sheets[SHEETS.projects.name] ?? []
     expect(projects[1]?.[3]).toBe('in chiusura')
-    expect(puts).toHaveLength(1)
+    expect(puts).toHaveLength(2)
     expect(puts[0]?.url).toMatch(/\/accounts\/acc123\/storage\/kv\/namespaces\/ns456\/values\/v1%2Friservata\.json$/)
+    expect(puts[1]?.url).toMatch(/\/values\/v1%2Fsito\.json$/)
+    const site = JSON.parse(puts[1]?.payload ?? '{}')
+    expect(site.groups.find((group: { id: string }) => group.id === 'GDL-orti').referents[0]).toEqual({
+      name: 'Lia Prova',
+      role: 'referente',
+    })
     const snapshot = JSON.parse(puts[0]?.payload ?? '{}')
     expect(snapshot.projects[0]).toMatchObject({ id: 'CAN-0001', stage: 'closing', updatedOn: '2026-10-31' })
     expect(snapshot.projects[0].updateUrl).toContain(`entry.1003=${DEMO_CODES['GDL-orti']}`)
@@ -359,12 +460,39 @@ describe('un giro del motore nel file unito', () => {
     expect(Object.keys(properties)).toContain('pubblicato:ns456:v1/riservata.json')
   })
 
+  it('il Modulo «Proponi un impegno»: la risposta completa la riga, l’elenco perde la riga, la Riservata ha la scheda', async () => {
+    const { sheets, puts, choiceWrites } = await run(
+      "onCommitmentFormSubmit({ triggerUid: 'uid-onCommitmentFormSubmit' })",
+      ['onCommitmentFormSubmit'],
+      true,
+    )
+    const rows = sheets[SHEETS.commitments.name] ?? []
+    const column = (name: string) => SHEETS.commitments.columns.indexOf(name)
+    const row = rows.find((cells) => cells[0] === 'IMP-0001') ?? []
+    expect(row[column('stato')]).toBe('proposto')
+    expect(row[column('giornate')]).toBe(12)
+    // «1.200» si scrive come testo nel Modulo; nella riga va il numero.
+    expect(row[column('compenso')]).toBe(1200)
+    expect(rows.filter((cells) => cells[2] === 'La cura della Bussola')).toHaveLength(1)
+    expect(choiceWrites).toEqual([['La newsletter del mese (IMP-0002)']])
+    const snapshot = JSON.parse(puts[0]?.payload ?? '{}')
+    expect(snapshot.commitmentFormUrl).toBe('https://docs.google.com/forms/d/e/impegni/viewform')
+    expect(snapshot.commitments.find((item: { id: string }) => item.id === 'IMP-0001')).toMatchObject({
+      status: 'proposed',
+      proposedOn: '2026-10-31',
+    })
+  })
+
   it('scrive «Salute»', async () => {
     const { sheets } = await run()
     expect((sheets[SHEETS.health.name] ?? []).slice(1).map((row) => row[0])).toEqual([
       'Foglio «Bussola · contenuti»',
       'Modulo «Aggiorna il cantiere»',
+      'Modulo «Prossimo incontro»',
+      'Modulo «Proponi un impegno»',
       'Istantanea riservata (v1/riservata.json)',
+      'Istantanea del sito (v1/sito.json)',
+      'Istantanea dei soci (v1/soci.json)',
       'Lista di Access (Persone della Riservata)',
     ])
   })
@@ -372,13 +500,172 @@ describe('un giro del motore nel file unito', () => {
   it('pubblica le scadenze, le delibere, le questioni e il budget, con le date di Roma', async () => {
     const { puts } = await run()
     const snapshot = JSON.parse(puts[0]?.payload ?? '{}')
-    expect(snapshot.deadlines).toHaveLength(8)
+    expect(snapshot.deadlines).toHaveLength(10)
     expect(snapshot.resolutions).toHaveLength(7)
     expect(snapshot.resolutions[0]).toMatchObject({ date: '2026-10-21', body: 'Coordinamento' })
     expect(snapshot.issues).toHaveLength(3)
     expect(snapshot.budget).toMatchObject({ updatedOn: '2026-10-22' })
   })
 })
+
+describe('la chiusura del mese dell’uso nel file unito', () => {
+  it('scrive «Uso», cancella le impronte del mese chiuso col sale e prepara il sale del mese dopo', async () => {
+    const { code } = await bundle('motore')
+    const sheets = demoSheets(new Date())
+    const fingerprint = (n: number) => n.toString(16).padStart(64, '0')
+    const keys = [
+      `uso:2026-09:coordinamento:${fingerprint(1)}`,
+      `uso:2026-09:coordinamento:${fingerprint(2)}`,
+      'uso-sale:2026-09',
+    ]
+    const calls: { method: string; url: string; payload?: string }[] = []
+    const UrlFetchApp = {
+      fetch: (url: string, params: { method: string; payload?: string }) => {
+        calls.push({ method: params.method, url, payload: params.payload })
+        const prefix = decodeURIComponent(/prefix=([^&]+)/.exec(url)?.[1] ?? '')
+        const body =
+          params.method === 'get'
+            ? { result: keys.filter((key) => key.startsWith(prefix)).map((name) => ({ name })), result_info: {} }
+            : { success: true }
+        return { getResponseCode: () => 200, getContentText: () => JSON.stringify(body) }
+      },
+    }
+    const context = {
+      Date,
+      JSON,
+      console: { log: () => undefined },
+      SpreadsheetApp: { openById: () => fakeSpreadsheet(sheets) },
+      PropertiesService: fakeProperties({
+        CONTENT_SHEET_ID: 'foglio',
+        CF_ACCOUNT_ID: 'acc123',
+        CF_KV_NAMESPACE_ID: 'ns456',
+        CF_API_TOKEN: 'token-segreto',
+      }),
+      LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => undefined }) },
+      Session: fakeSession(''),
+      ScriptApp: { getProjectTriggers: () => fakeTriggers(['closeUsage']) },
+      UrlFetchApp,
+      Utilities,
+    }
+    runInNewContext(`${code}\ncloseUsage({ triggerUid: 'uid-closeUsage' })`, context)
+    // Il mese si scrive come testo, con l'apostrofo: il Foglio ne farebbe una data.
+    expect((sheets[SHEETS.usage.name] ?? []).slice(1)).toEqual([["'2026-09", 'coordinamento', 2, 4]])
+    const deleted = calls.find((call) => call.url.endsWith('/bulk/delete'))
+    expect(JSON.parse(deleted?.payload ?? '[]')).toEqual(keys)
+    const salt = calls.find((call) => call.method === 'put')
+    expect(salt?.url).toMatch(/\/values\/uso-sale%3A\d{4}-\d{2}\?expiration_ttl=6048000$/)
+    expect(salt?.payload).toMatch(/^[0-9a-f]{64}$/)
+    const health = (sheets[SHEETS.health.name] ?? []).find((row) => row[0] === 'Uso della Bussola (scheda «Uso»)')
+    expect(health?.[1]).toBe('a posto')
+  })
+})
+
+describe('l’automatismo mensile nel file unito', () => {
+  it('la notte del primo crea la scadenza «misura» e il libro soci nel Drive, in sola lettura, nella cartella «Libro soci»', async () => {
+    const { code } = await bundle('motore')
+    const content = demoSheets(new Date())
+    const soci = demoSociSheets()
+    const created: Record<string, unknown[][]> = {}
+    const log: string[] = []
+    const properties: Record<string, string> = {
+      CONTENT_SHEET_ID: 'foglio-contenuti',
+      SOCI_SHEET_ID: 'foglio-soci',
+      CF_ACCOUNT_ID: 'acc123',
+      CF_KV_NAMESPACE_ID: 'ns456',
+      CF_API_TOKEN: 'token-segreto',
+    }
+    const SpreadsheetApp = {
+      openById: (id: string) => fakeSpreadsheet(id === 'foglio-contenuti' ? content : soci),
+      create: (name: string) => {
+        created[name] = []
+        const sheet = {
+          setName: () => sheet,
+          getRange: (row: number, column: number, rows: number, columns: number) => ({
+            setValues: (values: unknown[][]) => {
+              log.push(`valori ${name} ${row},${column} ${rows}x${columns}`)
+              created[name] = values
+            },
+          }),
+          setFrozenRows: () => undefined,
+          protect: () => recorder(log, `protezione ${name}`, { getEditors: ['x@example.org'], canDomainEdit: true }),
+        }
+        return {
+          getSheets: () => [sheet],
+          insertSheet: () => sheet,
+          getId: () => `id-${name}`,
+          getUrl: () => `https://docs.google.com/spreadsheets/d/id-${name}/edit`,
+        }
+      },
+      ProtectionType: { SHEET: 'SHEET' },
+    }
+    const folder = recorder(log, 'cartella', { getId: 'cartella-libro' })
+    const CalendarApp = {
+      getCalendarsByName: () => [],
+      createCalendar: (name: string) =>
+        recorder(log, `calendario ${name}`, {
+          getEvents: [],
+          createAllDayEvent: (title: string) => recorder(log, `evento «${title}»`),
+        }),
+    }
+    const DriveApp = {
+      getFileById: (id: string) =>
+        id === 'foglio-soci'
+          ? {
+              getParents: () => ({
+                next: () => ({ createFolder: (name: string) => (log.push(`crea ${name}`), folder) }),
+              }),
+            }
+          : recorder(log, `file ${id}`),
+      getFolderById: () => folder,
+    }
+    const context = {
+      Date,
+      JSON,
+      console: { log: () => undefined },
+      SpreadsheetApp,
+      DriveApp,
+      CalendarApp,
+      PropertiesService: fakeProperties(properties),
+      LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => undefined }) },
+      Session: fakeSession(''),
+      ScriptApp: { getProjectTriggers: () => fakeTriggers(['closeUsage']) },
+      UrlFetchApp: { fetch: () => ({ getResponseCode: () => 503, getContentText: () => 'giù' }) },
+      Utilities,
+    }
+    runInNewContext(`${code}\ncloseUsage({ triggerUid: 'uid-closeUsage' })`, context)
+    const today = romeDate(new Date())
+    const name = `Libro soci al ${today}`
+    expect(Object.keys(created)).toEqual([name])
+    expect(created[name]?.[0]).toEqual(expect.arrayContaining(['numero', 'cognome', 'nome', 'delibera', 'receduto il']))
+    expect(created[name]?.[0]).not.toContain('mail')
+    expect(created[name]).toHaveLength(21)
+    expect(log).toContain('crea Libro soci')
+    expect(log).toContain(`protezione ${name}.removeEditors(["x@example.org"])`)
+    expect(log).toContain(`protezione ${name}.setDomainEdit(false)`)
+    expect(log).toContain(`file id-${name}.setShareableByEditors(false)`)
+    expect(log).toContain(`file id-${name}.moveTo(${JSON.stringify(folder)})`.replace(JSON.stringify(folder), '{}'))
+    expect(properties['LIBRO_SOCI_FOLDER_ID']).toBe('cartella-libro')
+    expect(properties['segreteria:libro']).toContain(`"savedOn":"${today}"`)
+    expect(properties['segreteria:mensile']).toBe(today.slice(0, 7))
+    const ids = (content[SHEETS.deadlines.name] ?? []).map((row) => row[0])
+    expect(ids).toContain(`MIS-O9-${today.slice(0, 7)}`)
+    // Il calendario «Scadenze RAMI» nasce con un evento per ogni scadenza aperta, misura del mese compresa.
+    expect(log.filter((line) => line.startsWith('calendario Scadenze RAMI.createAllDayEvent('))).toHaveLength(
+      ids.length - 2,
+    )
+    expect(log).toContain(
+      `evento «Quota annuale all'ente di normazione · segue: il tesoriere».setTag("scadenza", "SCA-0001")`,
+    )
+    expect(log).toContain(`evento «Quota annuale all'ente di normazione · segue: il tesoriere».addPopupReminder(10080)`)
+    expect(log.some((line) => line.includes('SCA-0006'))).toBe(false)
+  })
+})
+
+/** Gli id che Google dà ai Moduli creati dalla preparazione finta. */
+const FORM_IDS: Record<string, string> = {
+  [MEETING_FORM.title]: 'modulo-incontri',
+  [COMMITMENT_FORM.title]: 'modulo-impegni',
+}
 
 describe('la preparazione nel file unito', () => {
   async function setup(
@@ -387,20 +674,44 @@ describe('la preparazione nel file unito', () => {
     triggers: string[] = [],
     extras: Extras = { validations: {}, formats: {} },
     formDescription: string = UPDATE_FORM.description,
+    /** I titoli delle domande del Modulo «Proponi un impegno» che c'è già: di partenza, tutti. */
+    commitmentTitles: readonly string[] = COMMITMENT_FORM.questions.map((question) => question.title),
   ) {
     const { code } = await bundle('motore')
     const log: string[] = []
+    const titles = (id: string) =>
+      id === 'modulo-incontri'
+        ? MEETING_FORM.questions.map((question) => question.title)
+        : id === 'modulo-impegni'
+          ? commitmentTitles
+          : UPDATE_FORM.questions.map((question) => question.title)
     const context = {
       Date,
-      console: { log: () => undefined },
+      // Le righe che la preparazione dice a chi la lancia dall'editor.
+      console: { log: (line: string) => void log.push(`console: ${line}`) },
       SpreadsheetApp: {
         openById: () => fakeSpreadsheet(sheets, extras),
         // La regola è l'elenco dei valori ammessi.
         newDataValidation: () => ({ requireValueInList: (values: string[]) => ({ build: () => values }) }),
       },
       FormApp: {
-        create: (title: string) => recorder(log, `modulo «${title}»`, { getId: 'modulo-nuovo' }),
-        openById: (id: string) => recorder(log, `modulo ${id}`, { getDescription: formDescription }),
+        create: (title: string) =>
+          recorder(log, `modulo «${title}»`, {
+            getId: FORM_IDS[title] ?? 'modulo-nuovo',
+          }),
+        // «Prossimo incontro» e «Proponi un impegno» hanno già la loro descrizione; quella dell'altro la dà la prova.
+        openById: (id: string) =>
+          recorder(log, `modulo ${id}`, {
+            getDescription:
+              id === 'modulo-incontri'
+                ? MEETING_FORM.description
+                : id === 'modulo-impegni'
+                  ? COMMITMENT_FORM.description
+                  : formDescription,
+            getItems: () => titles(id).map((title) => ({ getTitle: () => title })),
+          }),
+        // La convalida è la regola che chiede.
+        createTextValidation: () => ({ requireTextIsEmail: () => ({ build: () => 'una mail' }) }),
       },
       DriveApp: {
         getFileById: (id: string) =>
@@ -422,7 +733,11 @@ describe('la preparazione nel file unito', () => {
     const sheets: Sheets = {}
     await setup(sheets, { CONTENT_SHEET_ID: 'foglio' })
     for (const spec of Object.values(SHEETS)) expect(sheets[spec.name]?.[0]).toEqual([...spec.columns])
-    expect(sheets[SHEETS.settings.name]?.[1]).toEqual(['giorni per fermo', 30])
+    expect(sheets[SHEETS.settings.name]?.slice(1)).toEqual([
+      ['giorni per fermo', 30],
+      ['link della segreteria', ''],
+      ['compenso visibile ai soci', 'no'],
+    ])
   })
 
   it('non tocca le schede che ci sono già', async () => {
@@ -433,6 +748,35 @@ describe('la preparazione nel file unito', () => {
       'onUpdateFormSubmit',
     ])
     expect(JSON.stringify(sheets)).toBe(before)
+  })
+
+  it('a un Foglio di prima aggiunge in fondo le colonne e le voci nate dopo, una volta sola', async () => {
+    const sheets = demoSheets(new Date())
+    const groups = sheets[SHEETS.groups.name] ?? []
+    const open = SHEETS.groups.columns.indexOf('chat aperta ai soci')
+    sheets[SHEETS.groups.name] = groups.map((row) => row.filter((_, i) => i !== open))
+    sheets[SHEETS.settings.name] = [
+      ['voce', 'valore'],
+      ['giorni per fermo', 20],
+    ]
+    const before = JSON.stringify(sheets[SHEETS.groups.name]?.slice(1))
+    const extras: Extras = { validations: {}, formats: {} }
+    const properties = { CONTENT_SHEET_ID: 'foglio', UPDATE_FORM_ID: 'modulo', MEETING_FORM_ID: 'modulo-incontri' }
+    await setup(sheets, properties, [], extras)
+    const header = sheets[SHEETS.groups.name]?.[0] ?? []
+    expect(header.at(-1)).toBe('chat aperta ai soci')
+    expect(extras.validations).toEqual({ [`GdL!C${header.length}`]: ['sì', 'no'] })
+    // Le righe dei gruppi non cambiano: la colonna nuova è vuota, cioè chiusa.
+    expect(JSON.stringify(sheets[SHEETS.groups.name]?.slice(1))).toBe(before)
+    expect(sheets[SHEETS.settings.name]).toEqual([
+      ['voce', 'valore'],
+      ['giorni per fermo', 20],
+      ['link della segreteria', ''],
+      ['compenso visibile ai soci', 'no'],
+    ])
+    const again = JSON.stringify(sheets)
+    await setup(sheets, properties)
+    expect(JSON.stringify(sheets)).toBe(again)
   })
 
   it('la scheda «Misure» nasce con dieci righe, «chi conta» e la formula in «variazione»', async () => {
@@ -463,10 +807,29 @@ describe('la preparazione nel file unito', () => {
     const extras: Extras = { validations: {}, formats: {} }
     await setup({}, { CONTENT_SHEET_ID: 'foglio' }, [], extras)
     expect(extras.validations).toEqual({
+      'GdL!C7': ['sì', 'no'],
       'Cantieri!C4': ['avvio', 'in corso', 'in revisione', 'in chiusura', 'chiuso'],
       'Scadenze!C3': ['bando', 'adempimento', 'fiscale', 'evento', 'Assemblea', 'misura'],
+      'Scadenze!C8': ['sì', 'no'],
       'Delibere!C3': ['Direttivo', 'Coordinamento', 'Assemblea'],
       'Questioni!C5': ['aperta', 'chiusa'],
+      'Incontri!C4': ['sì', 'no'],
+      'Link!C3': ['tutti', 'soci', 'partecipanti del GdL', 'Coordinamento'],
+      'Impegni!C8': ['continuativo', 'a progetto'],
+      'Impegni!C11': ['volontario', 'rimborso spese', 'compenso'],
+      'Impegni!C13': ['sì', 'no'],
+      'Impegni!C23': [
+        'da scrivere',
+        'proposto',
+        'approvato dal Coordinamento',
+        'aperto',
+        'preso',
+        'in corso',
+        'consegnato',
+        'chiuso',
+        'respinto',
+      ],
+      'Impegni!C24': ['completato', 'revocato', 'ritirato'],
     })
   })
 
@@ -484,6 +847,43 @@ describe('la preparazione nel file unito', () => {
     expect(properties.UPDATE_FORM_ID).toBe('modulo-nuovo')
   })
 
+  it('crea il Modulo «Prossimo incontro»: giorno, ora, link di Meet e se è visibile ai soci', async () => {
+    const properties: Record<string, string> = { CONTENT_SHEET_ID: 'foglio' }
+    const log = await setup({}, properties)
+    const form = log.filter((line) => line.startsWith('modulo «Prossimo incontro»'))
+    for (const question of MEETING_FORM.questions)
+      expect(form).toContain(`modulo «Prossimo incontro».setTitle(${JSON.stringify(question.title)})`)
+    expect(form).toContain('modulo «Prossimo incontro».addTimeItem()')
+    expect(form).toContain('modulo «Prossimo incontro».setChoiceValues(["Sì","No"])')
+    expect(form).toContain('modulo «Prossimo incontro».setRequireLogin(false)')
+    expect(log).toContain('file modulo-incontri.moveTo("cartella Bussola")')
+    expect(properties.MEETING_FORM_ID).toBe('modulo-incontri')
+  })
+
+  it('crea il Modulo «Proponi un impegno»: la riga da un elenco, i sette blocchi con un aiuto sotto ognuno', async () => {
+    const properties: Record<string, string> = { CONTENT_SHEET_ID: 'foglio' }
+    const log = await setup({}, properties)
+    const form = log.filter((line) => line.startsWith('modulo «Proponi un impegno»'))
+    // Ogni domanda, sul Modulo creato: il titolo, l'aiuto sotto, e se è obbligatoria, nelle tre chiamate in fila.
+    for (const question of COMMITMENT_FORM.questions) {
+      const title = `modulo «Proponi un impegno».setTitle(${JSON.stringify(question.title)})`
+      const at = form.indexOf(title)
+      expect(form.slice(at, at + 3), question.title).toEqual([
+        title,
+        `modulo «Proponi un impegno».setHelpText(${JSON.stringify(question.help)})`,
+        `modulo «Proponi un impegno».setRequired(${JSON.stringify(question.required)})`,
+      ])
+    }
+    expect(form).toContain('modulo «Proponi un impegno».addListItem()')
+    expect(form).toContain(`modulo «Proponi un impegno».setChoiceValues(${JSON.stringify([NO_COMMITMENT_ROW])})`)
+    expect(form).toContain('modulo «Proponi un impegno».setChoiceValues(["Continuativo","A progetto"])')
+    // La mail di chi propone: Google la accetta solo se è una mail.
+    expect(form).toContain('modulo «Proponi un impegno».setValidation("una mail")')
+    expect(form).toContain('modulo «Proponi un impegno».setRequireLogin(false)')
+    expect(log).toContain('file modulo-impegni.moveTo("cartella Bussola")')
+    expect(properties.COMMITMENT_FORM_ID).toBe('modulo-impegni')
+  })
+
   it('a un Modulo che c’è già rimette la descrizione, col link all’informativa', async () => {
     const properties = { CONTENT_SHEET_ID: 'foglio', UPDATE_FORM_ID: 'modulo' }
     const log = await setup({}, properties, [], undefined, 'Ci vuole un minuto.')
@@ -492,14 +892,50 @@ describe('la preparazione nel file unito', () => {
     expect(again.filter((line) => line.includes('setDescription'))).toEqual([])
   })
 
-  it('accende i due trigger, una volta sola', async () => {
+  it('a un Modulo nato prima delle domande su chi propone, dice quali aggiungere a mano, coi titoli', async () => {
+    const properties = { CONTENT_SHEET_ID: 'foglio', COMMITMENT_FORM_ID: 'modulo-impegni' }
+    const before = COMMITMENT_FORM.questions
+      .filter((question) => !['proposerFirstName', 'proposerLastName', 'proposerEmail'].includes(question.field))
+      .map((question) => question.title)
+    const log = await setup({}, properties, [], undefined, UPDATE_FORM.description, before)
+    expect(log).toContain(
+      'console: Il Modulo «Proponi un impegno» non ha le domande «Chi lo propone? Il tuo nome», «Il tuo cognome», ' +
+        '«La tua mail»: aggiungile a mano, con questi titoli, perché il motore legge le risposte dal titolo.',
+    )
+    const again = await setup({}, properties)
+    expect(again.filter((line) => line.includes('non ha le domande'))).toEqual([])
+  })
+
+  it('accende i trigger, una volta sola', async () => {
     const log = await setup({}, { CONTENT_SHEET_ID: 'foglio' })
     expect(log).toContain('trigger everyTenMinutes.everyMinutes(10)')
+    expect(log).toContain('trigger onUpdateFormSubmit.forForm("modulo-nuovo")')
     expect(log).toContain('trigger onUpdateFormSubmit.onFormSubmit()')
-    const again = await setup({}, { CONTENT_SHEET_ID: 'foglio', UPDATE_FORM_ID: 'modulo' }, [
-      'everyTenMinutes',
-      'onUpdateFormSubmit',
-    ])
+    expect(log).toContain('trigger onMeetingFormSubmit.forForm("modulo-incontri")')
+    expect(log).toContain('trigger onMeetingFormSubmit.onFormSubmit()')
+    expect(log).toContain('trigger onCommitmentFormSubmit.forForm("modulo-impegni")')
+    expect(log).toContain('trigger onCommitmentFormSubmit.onFormSubmit()')
+    expect(log).toContain('trigger onContentEdit.forSpreadsheet("foglio")')
+    expect(log).toContain('trigger onContentEdit.onEdit()')
+    expect(log).toContain('trigger closeUsage.everyDays(1)')
+    expect(log).toContain('trigger closeUsage.atHour(1)')
+    const again = await setup(
+      {},
+      {
+        CONTENT_SHEET_ID: 'foglio',
+        UPDATE_FORM_ID: 'modulo',
+        MEETING_FORM_ID: 'modulo-incontri',
+        COMMITMENT_FORM_ID: 'modulo-impegni',
+      },
+      [
+        'everyTenMinutes',
+        'onUpdateFormSubmit',
+        'onMeetingFormSubmit',
+        'onCommitmentFormSubmit',
+        'onContentEdit',
+        'closeUsage',
+      ],
+    )
     expect(again.filter((line) => line.startsWith('trigger'))).toEqual([])
   })
 })
@@ -584,9 +1020,33 @@ describe('la segreteria nel file unito', () => {
       expect.objectContaining({
         to: 'elisa.santoro@example.org',
         name: 'Segreteria RAMI',
+        replyTo: 'segreteria@retemicrofarm.it',
         subject: 'Quota ricevuta, sei in regola',
       }),
     ])
+  })
+
+  it('il tesoriere conferma un pagamento in attesa: conta, e al socio parte la ricevuta', async () => {
+    const { result, sheets } = await office(
+      DEMO_SHARED_ACCOUNT,
+      `officeConfirmPayment(${JSON.stringify({ person: DEMO_OFFICE.treasurer, paymentId: 'P-2026-0007' })})`,
+    )
+    expect(result).toMatchObject({ kind: 'done', mail: 'sent' })
+    expect(result.view.dashboard.pendingTreasurer).toEqual([])
+    const row = (sheets[SOCI_SHEETS.payments.name] ?? []).find((candidate) => candidate[0] === 'P-2026-0007')
+    expect(row?.[SOCI_SHEETS.payments.columns.indexOf('stato')]).toBe('registrato')
+    expect(mails).toEqual([expect.objectContaining({ to: 'giorgio.mancini@example.org' })])
+  })
+
+  it('«Oggi» arriva con la vista: i pagamenti da seguire e, senza il Foglio contenuti, lo dice', async () => {
+    const { result } = await office(DEMO_EMAILS.office, 'officeOpen()')
+    expect(result.view.dashboard).toMatchObject({
+      matchedLines: 3,
+      lastRecording: { id: 'P-2026-0007' },
+      contentProblem: 'Il Foglio contenuti non è collegato.',
+      publication: { pendingSince: '', error: '' },
+    })
+    expect(result.view.dashboard.cashToDeliver.total).toBe(60)
   })
 
   it('un Foglio scritto male torna come errore in italiano, non come eccezione', async () => {
@@ -650,7 +1110,8 @@ describe('la segreteria nel file unito', () => {
       getSharingAccess: () => access,
       getSharingPermission: () => 'VIEW',
     })
-    const folder = item(['segreteria@example.org'], 'DOMAIN_WITH_LINK')
+    // La cartella «Bussola» resta nel Drive di RAMI: l'indirizzo della segreteria ci può stare (ADR 0004).
+    const folder = item(['segreteria@example.org', 'Segreteria@retemicrofarm.it'], 'DOMAIN_WITH_LINK')
     const context = {
       Date,
       JSON,
@@ -664,7 +1125,7 @@ describe('la segreteria nel file unito', () => {
       ScriptApp: { getProjectTriggers: () => fakeTriggers(['checkOfficeSharing']) },
       DriveApp: {
         getFileById: () => ({
-          ...item(['segreteria@example.org', 'curioso@example.org']),
+          ...item(['segreteria@example.org', 'segreteria@retemicrofarm.it', 'curioso@example.org']),
           getParents: () => ({ next: () => folder }),
         }),
         getFolderById: () => item([DEMO_EMAILS.board, 'altro@example.org']),
@@ -686,7 +1147,7 @@ describe('la preparazione del Foglio soci nel file unito', () => {
     sheets: Sheets,
     triggers: string[] = [],
     protectedSheets: string[] = [],
-    owner: string | null = SECRETARY,
+    owner: string | null = BUSSOLA_ACCOUNT,
   ) {
     const { code } = await bundle('motore')
     const log: string[] = []
@@ -728,7 +1189,7 @@ describe('la preparazione del Foglio soci nel file unito', () => {
       ['fine della grazia', "'31/3", ''],
       ['importo della quota', 30, ''],
       ['IBAN', '', ''],
-      ['causale', 'Quota RAMI <anno> socio n. <numero>', ''],
+      ['causale', 'tesseramento socio <anno> n. <numero>', ''],
       ['per i contanti, la mail fa da ricevuta', 'sì', ''],
       ['link alle Istruzioni della segreteria', '', ''],
       ['legge il Foglio soci', '', 'chi cura la Bussola: scrivi la sua mail'],
@@ -751,26 +1212,32 @@ describe('la preparazione del Foglio soci nel file unito', () => {
   })
 
   it('protegge il «Registro di Accessi»: niente editori, niente dominio', async () => {
-    const { log, extras } = await setupSoci({})
+    const { log, extras, lines } = await setupSoci({})
     expect(extras.protected).toEqual(['Registro di Accessi'])
+    expect(log).toContain(
+      'protezione Registro di Accessi.setDescription("Lo scrive solo il motore, con l’account della Bussola.")',
+    )
+    expect(lines.join('\n')).toContain(
+      'Scheda «Registro di Accessi» protetta: la modificano solo il proprietario e l’account della Bussola.',
+    )
     expect(log).toContain('protezione Registro di Accessi.removeEditors(["editore@example.org"])')
     expect(log).toContain('protezione Registro di Accessi.setDomainEdit(false)')
   })
 
-  it('l’account della segreteria resta editore del registro, prima di togliere gli altri', async () => {
+  it('l’account della Bussola resta editore del registro, prima di togliere gli altri', async () => {
     const { log } = await setupSoci({})
-    const added = log.indexOf(`protezione Registro di Accessi.addEditor("${SECRETARY}")`)
+    const added = log.indexOf(`protezione Registro di Accessi.addEditor("${BUSSOLA_ACCOUNT}")`)
     expect(added).toBeGreaterThanOrEqual(0)
     expect(added).toBeLessThan(log.indexOf('protezione Registro di Accessi.removeEditors(["editore@example.org"])'))
   })
 
-  it('avvisa se il Foglio soci non è dell’account della segreteria', async () => {
-    const { lines } = await setupSoci({}, [], [], 'presidente@example.org')
+  it('avvisa se il Foglio soci non è dell’account della Bussola, e dice qual è', async () => {
+    const { lines } = await setupSoci({}, [], [], 'segreteria@example.org')
     expect(lines[0]).toBe(
-      'Attenzione: il Foglio soci è di presidente@example.org, non dell’account della segreteria. ' +
-        'Spostane la proprietà, poi rilancia setupSoci.',
+      'Attenzione: il Foglio soci è di segreteria@example.org, non dell’account della Bussola ' +
+        '(amministratore.bussola@example.org). Spostane la proprietà, poi rilancia setupSoci.',
     )
-    const mine = await setupSoci({}, [], [], ' Segreteria@Example.org')
+    const mine = await setupSoci({}, [], [], ' Amministratore.Bussola@Example.org')
     expect(mine.lines.join('\n')).not.toContain('Attenzione')
     const unknown = await setupSoci({}, [], [], null)
     expect(unknown.lines.join('\n')).not.toContain('Attenzione')

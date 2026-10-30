@@ -1,10 +1,13 @@
 // L'istantanea riservata (`v1/riservata.json`): ciò che vedono Direttivo, Coordinamento e segreteria su pages.dev.
 // In T1 porta i GdL coi link precompilati del Modulo, i cantieri aperti e le Persone della Riservata come impronte;
-// in T2 le scadenze, le delibere, le questioni aperte e il budget. Nessun nome: chi segue è un ruolo.
+// in T2 le scadenze, le delibere, le questioni aperte e il budget; in T6 gli impegni, con la scheda in sette blocchi.
+// Nessun nome: chi segue è un ruolo, chi prende un impegno un numero socio.
 // Il motore la scrive, la vetrina la legge: quello che arriva da KV non è fidato finché non ha la forma giusta.
+import { parseReservedCommitment, type ReservedCommitment } from './commitments.ts'
 import { isDeadlineKind, isDriveUrl, type Deadline } from './deadlines.ts'
 import { isFingerprint } from './fingerprint.ts'
 import { isCalendarDate, isStage, type CalendarDate, type WorkStage } from './projects.ts'
+import { isLocalDateTime, isMeetUrl, type Meeting } from './site.ts'
 
 export const RESERVED_KEY = 'v1/riservata.json'
 
@@ -17,7 +20,12 @@ export type ReservedGroup = {
   name: string
   /** Il Modulo «Aggiorna il cantiere» con gruppo e codice del gruppo, senza cantiere: ne nasce uno nuovo. */
   newProjectUrl: string | null
+  /** Il Modulo «Prossimo incontro» con gruppo e codice del gruppo (da T7). */
+  newMeetingUrl: string | null
 }
+
+/** Un incontro dei prossimi 60 giorni, anche quelli non visibili ai soci: il rappresentante vede quelli del suo GdL. */
+export type ReservedMeeting = Meeting & { membersCanSee: boolean }
 
 export type ReservedProject = {
   id: string
@@ -42,6 +50,12 @@ export type ReservedPerson = {
   /** Il GdL, se rappresentante. */
   groupId: string | null
 }
+
+/**
+ * Entra chi sta in «Persone della Riservata» con almeno un ruolo: Direttivo, Coordinamento (i rappresentanti),
+ * segreteria, chi cura la Bussola. Sta qui perché la usano la vetrina e il seed dell'anteprima.
+ */
+export const canEnter = (person: ReservedPerson | null) => (person?.roles.length ?? 0) > 0
 
 export type ReservedResolution = {
   date: CalendarDate
@@ -90,6 +104,12 @@ export type ReservedSnapshot = {
   /** Le questioni aperte. */
   issues: ReservedIssue[]
   budget: ReservedBudget
+  /** Gli incontri dei prossimi 60 giorni (da T7). */
+  meetings: ReservedMeeting[]
+  /** Da T6: gli impegni dell'anno, e quelli degli anni prima non ancora chiusi. */
+  commitments: ReservedCommitment[]
+  /** Il Modulo «Proponi un impegno»; null finché non è collegato. */
+  commitmentFormUrl: string | null
 }
 
 const FORMS_PREFIX = 'https://docs.google.com/forms/'
@@ -104,7 +124,24 @@ const amount = (value: unknown) => (typeof value === 'number' && Number.isFinite
 
 function parseGroup(value: unknown): ReservedGroup | null {
   if (!isObject(value) || !isId(value.id) || !isText(value.name)) return null
-  return { id: value.id, name: value.name, newProjectUrl: formUrl(value.newProjectUrl) }
+  return {
+    id: value.id,
+    name: value.name,
+    newProjectUrl: formUrl(value.newProjectUrl),
+    newMeetingUrl: formUrl(value.newMeetingUrl),
+  }
+}
+
+function parseMeeting(value: unknown): ReservedMeeting | null {
+  if (!isObject(value) || !isId(value.groupId) || !isLocalDateTime(value.startsAt) || !isMeetUrl(value.meetUrl))
+    return null
+  if (typeof value.membersCanSee !== 'boolean') return null
+  return {
+    groupId: value.groupId,
+    startsAt: value.startsAt,
+    meetUrl: value.meetUrl,
+    membersCanSee: value.membersCanSee,
+  }
 }
 
 function parseProject(value: unknown): ReservedProject | null {
@@ -186,7 +223,7 @@ function parseList<T>(value: unknown, parse: (item: unknown) => T | null): T[] |
   return value.map(parse).filter((item): item is T => item !== null)
 }
 
-/** Le sezioni di T2: un'istantanea di T1, che non le ha, si legge con le sezioni vuote. */
+/** Le sezioni di T2, T7 e T6: un'istantanea di prima, che non le ha, si legge con le sezioni vuote. */
 const parseSection = <T>(value: unknown, parse: (item: unknown) => T | null) =>
   value === undefined ? [] : parseList(value, parse)
 
@@ -209,6 +246,23 @@ export function parseReservedSnapshot(value: unknown): ReservedSnapshot | null {
   const resolutions = parseSection(value.resolutions, parseResolution)
   const issues = parseSection(value.issues, parseIssue)
   const budget = parseBudget(value.budget)
-  if (!groups || !projects || !people || !deadlines || !resolutions || !issues || !budget) return null
-  return { version: 1, publishedAt, staleDays, groups, projects, people, deadlines, resolutions, issues, budget }
+  const meetings = parseSection(value.meetings, parseMeeting)
+  const commitments = parseSection(value.commitments, parseReservedCommitment)
+  if (!groups || !projects || !people || !deadlines || !resolutions || !issues || !budget || !meetings || !commitments)
+    return null
+  return {
+    version: 1,
+    publishedAt,
+    staleDays,
+    groups,
+    projects,
+    people,
+    deadlines,
+    resolutions,
+    issues,
+    budget,
+    meetings,
+    commitments,
+    commitmentFormUrl: formUrl(value.commitmentFormUrl),
+  }
 }

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/js-size.ts",
     "preview": "wrangler pages dev",
     "typegen": "wrangler types --env-interface CloudflareBindings --strict-vars=false"
   },

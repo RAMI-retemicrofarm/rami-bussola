@@ -58,7 +58,10 @@ export function PrivacyPage({
         </li>
         <li>
           <b>Se sei del Direttivo, del Coordinamento o della segreteria</b>: la tua mail e i tuoi ruoli, per farti
-          entrare nella Riservata, la parte con scadenze, delibere e budget.
+          entrare nella Riservata, la parte con scadenze, delibere e budget. Se proponi un impegno dal Modulo, il tuo
+          nome e cognome, il numero di socio e la mail, per sapere chi l’ha proposto e scriverti sulla scheda. Nome,
+          cognome e mail restano nel Foglio della Bussola, su Google, che leggono la segreteria e chi cura la Bussola:
+          non vanno sul sito né nella Riservata.
         </li>
         <li>
           <b>Per sapere quanto si usa la Bussola</b>: contiamo le persone diverse di ogni mese con un’impronta, un
@@ -83,9 +86,9 @@ export function PrivacyPage({
       <ul>
         <li>
           <b>Su Google</b>, nel Drive di RAMI: l’anagrafica, le quote e i pagamenti, in un Foglio dell’account della
-          segreteria. Lo leggono solo il segretario, la segreteria part-time, il tesoriere e chi cura la Bussola, che
-          come amministratore del sistema può leggere tutto. Il Direttivo vede le copie del libro soci, senza mail,
-          telefono e note.
+          Bussola. Lo leggono solo il segretario, la segreteria part-time, il tesoriere e chi cura la Bussola, che come
+          amministratore del sistema può leggere tutto. Il Direttivo vede le copie del libro soci, senza mail, telefono
+          e note.
         </li>
         <li>
           <b>Su Cloudflare</b>, dove gira il sito: una copia per leggere, senza l’anagrafica. Ci sono numeri di socio,
@@ -140,6 +143,7 @@ export function PrivacyPage({
         <li>Il registro delle richieste sui dati e delle violazioni: 5 anni da quando si chiudono.</li>
         <li>I link personali: 12 mesi dopo la scadenza o il ritiro.</li>
         <li>Le candidature e gli aggiornamenti sugli impegni: 1 anno dopo la chiusura dell’impegno.</li>
+        <li>Nome, cognome e mail di chi propone un impegno: 2 anni dalla proposta, come le risposte ai Moduli.</li>
         <li>Le richieste di entrare in un GdL: 1 anno.</li>
         <li>Le persone della Riservata e la lista di Cloudflare Access: finché hai il ruolo.</li>
         <li>I registri degli accessi di Cloudflare Access: 24 ore.</li>

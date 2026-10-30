@@ -36,3 +36,45 @@ describe('cloudflareKv', () => {
     expect(put).not.toThrow(/token-segreto/)
   })
 })
+
+describe('cloudflareKv, per l’uso', () => {
+  it('una chiave che scade dopo 70 giorni', () => {
+    const { fetch, calls } = fakeFetch(200)
+    cloudflareKv(config, fetch).put('uso-sale:2026-11', 'sale', { expirationTtl: 6_048_000 })
+    expect(calls[0]?.url).toMatch(/\/values\/uso-sale%3A2026-11\?expiration_ttl=6048000$/)
+  })
+
+  it('elenca le chiavi con un prefisso, pagina dopo pagina', () => {
+    const pages = [
+      { result: [{ name: 'uso:2026-10:coordinamento:a' }], result_info: { cursor: 'c2' } },
+      { result: [{ name: 'uso:2026-10:coordinamento:b' }], result_info: { cursor: '' } },
+    ]
+    const urls: string[] = []
+    const fetch: HttpFetch = (url) => {
+      urls.push(url)
+      const page = pages.shift()
+      return { getResponseCode: () => 200, getContentText: () => JSON.stringify(page) }
+    }
+    expect(cloudflareKv(config, fetch).list('uso:')).toEqual([
+      'uso:2026-10:coordinamento:a',
+      'uso:2026-10:coordinamento:b',
+    ])
+    expect(urls[0]).toBe(
+      'https://api.cloudflare.com/client/v4/accounts/acc123/storage/kv/namespaces/ns456/keys?prefix=uso%3A&limit=1000',
+    )
+    expect(urls[1]).toContain('&cursor=c2')
+  })
+
+  it('cancella le chiavi in una chiamata sola, con l’elenco dei nomi', () => {
+    const { fetch, calls } = fakeFetch(200)
+    cloudflareKv(config, fetch).delete(['a', 'b'])
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.url).toMatch(/\/namespaces\/ns456\/bulk\/delete$/)
+    expect(calls[0]?.params).toMatchObject({ method: 'post', payload: '["a","b"]' })
+  })
+
+  it('se Cloudflare non risponde 200, cancellare si ferma', () => {
+    const { fetch } = fakeFetch(500, 'errore')
+    expect(() => cloudflareKv(config, fetch).delete(['a'])).toThrow(/500 cancellando 1 chiavi/)
+  })
+})

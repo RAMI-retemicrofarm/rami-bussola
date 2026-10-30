@@ -1,10 +1,13 @@
 // La mail «Quota ricevuta, sei in regola» (flusso D, punto 3): parte al socio quando un pagamento è registrato e
-// conta. Se il socio non è in regola nemmeno dopo, l'oggetto è solo «Quota ricevuta». Un pagamento in attesa del tesoriere la manda alla conferma (T4).
+// conta. Se il socio non è in regola nemmeno dopo, l'oggetto è solo «Quota ricevuta». Un pagamento in attesa del
+// tesoriere la manda alla conferma.
 import type { CalendarDate } from '@bussola/condiviso'
 import { PRIVACY_URL } from './form.ts'
+import { OFFICE_ADDRESS } from './members.ts'
 import type { OfficePayment } from './office-api.ts'
 
-export type Mail = { to: string; name: string; subject: string; body: string }
+/** Una mail di servizio. Parte dall'account della Bussola: `replyTo` porta le risposte dei soci alla segreteria. */
+export type Mail = { to: string; name: string; replyTo: string; subject: string; body: string }
 
 export type ReceiptInput = {
   firstName: string
@@ -37,5 +40,5 @@ export function receiptMail({ firstName, email, payment, cashReceipt, inGoodStan
   if (payment.method === 'cash' && cashReceipt) lines.push('Questa mail vale come ricevuta.')
   lines.push('', 'Grazie,', 'la segreteria di RAMI', '', `Come usiamo i tuoi dati: ${PRIVACY_URL}`)
   const subject = inGoodStanding ? 'Quota ricevuta, sei in regola' : 'Quota ricevuta'
-  return { to: email, name: 'Segreteria RAMI', subject, body: lines.join('\n') }
+  return { to: email, name: 'Segreteria RAMI', replyTo: OFFICE_ADDRESS, subject, body: lines.join('\n') }
 }

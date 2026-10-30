@@ -1,6 +1,29 @@
 // Ciò che lega il motore (Apps Script) e la vetrina (Pages): le chiavi di KV e i tipi delle istantanee (ADR 0001).
 // Gira in due runtime, quindi niente API di Node, di Workers o di Google: solo ES2020.
 export {
+  commitmentCoverage,
+  COMMITMENT_OUTCOME_LABELS,
+  COMMITMENT_OUTCOMES,
+  COMMITMENT_PAY_LABELS,
+  COMMITMENT_PAYS,
+  COMMITMENT_STATUS_LABELS,
+  COMMITMENT_STATUSES,
+  COMMITMENT_TERM_LABELS,
+  COMMITMENT_TERMS,
+  coverageLabel,
+  COVERAGE_TARGET_PERCENT,
+  isCommitmentStatus,
+  isCovered,
+  isPublicStatus,
+  toCover,
+  type CommitmentOutcome,
+  type CommitmentPay,
+  type CommitmentStatus,
+  type CommitmentTerm,
+  type ReservedCommitment,
+  type SiteCommitment,
+} from './commitments.ts'
+export {
   deadlineCounts,
   deadlineSignals,
   deadlinesToWatch,
@@ -39,6 +62,7 @@ export {
 } from './dues.ts'
 export { bytesToHex, FINGERPRINT_VECTOR, isFingerprint, normalizeEmail } from './fingerprint.ts'
 export { HELLO_KEY, parseHello, type Hello } from './hello.ts'
+export { MEMBERS_KEY, parseMembersSnapshot, type MembersSnapshot } from './members-snapshot.ts'
 export {
   daysBetween,
   FRESH_DAYS,
@@ -46,6 +70,7 @@ export {
   isCalendarDate,
   isStage,
   projectSignals,
+  recentlyUpdated,
   romeDate,
   STAGE_LABELS,
   stageStep,
@@ -56,7 +81,9 @@ export {
   type Stage,
   type WorkStage,
 } from './projects.ts'
+export { RENEWAL_TARGET_PERCENT, renewals, renewalsLabel, type Renewals } from './renewals.ts'
 export {
+  canEnter,
   parseReservedSnapshot,
   recentResolutions,
   RESERVED_KEY,
@@ -69,5 +96,45 @@ export {
   type ReservedProject,
   type ReservedResolution,
   type ReservedSnapshot,
+  type ReservedMeeting,
   type Role,
 } from './reserved.ts'
+export {
+  addMinutes,
+  COORDINATION_ID,
+  isLinkUrl,
+  isLocalDateTime,
+  isMeetUrl,
+  LINK_AUDIENCES,
+  MEETING_GRACE_MINUTES,
+  MEETING_WINDOW_DAYS,
+  nextMeeting,
+  parseSiteSnapshot,
+  romeDateTime,
+  SITE_DEADLINE_DAYS,
+  SITE_KEY,
+  upcomingDeadlines,
+  type FirstDayStep,
+  type LinkAudience,
+  type LocalDateTime,
+  type Meeting,
+  type Referent,
+  type SiteDeadline,
+  type SiteGroup,
+  type SiteLink,
+  type SiteSnapshot,
+} from './site.ts'
+export {
+  parseUsageKey,
+  SALT_PREFIX,
+  saltKey,
+  saltMonth,
+  USAGE_AREAS,
+  USAGE_PREFIX,
+  USAGE_TTL_SECONDS,
+  usageArea,
+  usageKey,
+  usageMonth,
+  type Month,
+  type UsageArea,
+} from './usage.ts'

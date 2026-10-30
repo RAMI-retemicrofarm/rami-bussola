@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { sha256Hex } from './identity.ts'
 import app from './index.tsx'
 import { RiservataPage } from './riservata.tsx'
-import { daysAgo, EMAILS, reservedFixture, testEnv } from './testing.ts'
+import { daysAgo, EMAILS, membersFixture, requestPage, reservedFixture, testEnv, visibleText } from './testing.ts'
 import { formatDay, formatEuro } from './ui.tsx'
 
 // In locale Access non c'è: chi entra lo dice la mail di prova, che vale solo su localhost.
@@ -22,11 +22,17 @@ const card = (html: string, title: string) => {
   return start < 0 ? '' : html.slice(start, html.indexOf('</article>', start))
 }
 
+/** Dove comincia il titolo di una sezione, con o senza l'id del salto; -1 se non c'è. */
+const headingAt = (html: string, title: string) => {
+  const at = html.indexOf(`>${title}</h2>`)
+  return at < 0 ? -1 : html.lastIndexOf('<h2', at)
+}
+
 /** Una sezione della Riservata, dal suo titolo al titolo dopo; gli spazi che non vanno a capo diventano spazi. */
 const section = (html: string, title: string) => {
-  const start = html.indexOf(`<h2>${title}</h2>`)
+  const start = headingAt(html, title)
   if (start < 0) return ''
-  const end = html.indexOf('<h2>', start + 1)
+  const end = html.indexOf('<h2', start + 1)
   return html.slice(start, end < 0 ? undefined : end).replace(/\u00a0/g, ' ')
 }
 
@@ -116,6 +122,59 @@ describe('/cantieri', () => {
     })
   })
 
+  describe('i filtri', () => {
+    /** I titoli dei cantieri sulla pagina, nell'ordine. */
+    const titles = (html: string) => [...html.matchAll(/<h2 class="scheda-titolo">([^<]+)<\/h2>/g)].map((m) => m[1])
+    /** Le voci dei filtri, coi loro indirizzi; quella scelta ha aria-current. */
+    const filters = (html: string) =>
+      [
+        ...(html.match(/<nav class="filtri"[\s\S]*?<\/nav>/)?.[0] ?? '').matchAll(/<a href="([^"]+)"([^>]*)>([^<]+)</g),
+      ].map((m) => [m[1]?.replace(/&amp;/g, '&'), m[3], m[2]?.includes('aria-current="page"')])
+
+    it('Tutti e Da aggiornare per tutti; «Tutti» è scelto all’inizio', async () => {
+      const { html } = await page('/cantieri', EMAILS.board)
+      expect(filters(html)).toEqual([
+        ['/cantieri', 'Tutti (4)', true],
+        ['/cantieri?filtro=da-aggiornare', 'Da aggiornare (2)', false],
+      ])
+    })
+
+    it('«Il mio gruppo» c’è per il rappresentante, e mostra solo i cantieri del suo GdL', async () => {
+      const { html } = await page('/cantieri?filtro=mio', EMAILS.rep)
+      expect(filters(html)).toEqual([
+        ['/cantieri', 'Tutti (4)', false],
+        ['/cantieri?filtro=mio', 'Il mio gruppo (2)', true],
+        ['/cantieri?filtro=da-aggiornare', 'Da aggiornare (2)', false],
+      ])
+      expect(titles(html)).toEqual(['Orto condiviso', 'Rete dei mercati contadini'])
+    })
+
+    it('«Da aggiornare» mostra i cantieri fermi o in ritardo, e solo quelli', async () => {
+      const { html } = await page('/cantieri?filtro=da-aggiornare', EMAILS.board)
+      // In ritardo di 10 giorni il primo, fermo da 30 il secondo; aggiornati 29 giorni fa e oggi gli altri.
+      expect(titles(html)).toEqual(['Sito dei prodotti locali', 'Scambio di semi autunnale'])
+      expect(card(html, 'Sito dei prodotti locali')).toContain('Da aggiornare')
+      expect(card(html, 'Scambio di semi autunnale')).toContain('Da aggiornare')
+    })
+
+    it('senza cantieri da aggiornare lo dice', async () => {
+      const snapshot = reservedFixture()
+      const projects = snapshot.projects.map((project) => ({ ...project, updatedOn: today(), dueOn: null }))
+      const { html } = await page('/cantieri?filtro=da-aggiornare', EMAILS.board, { ...snapshot, projects })
+      expect(html).toContain('Nessun cantiere da aggiornare.')
+    })
+
+    it('«Il mio gruppo» per chi non è rappresentante, o un filtro che non c’è, vale «Tutti»', async () => {
+      for (const path of ['/cantieri?filtro=mio', '/cantieri?filtro=boh'])
+        expect(titles((await page(path, EMAILS.board)).html)).toHaveLength(4)
+    })
+
+    it('ogni cantiere ha il suo id, per i risultati della ricerca', async () => {
+      const { html } = await page('/cantieri', EMAILS.board)
+      expect(html).toContain('<article class="card" id="CAN-0001">')
+    })
+  })
+
   it('chi ha un ruolo ma non è rappresentante non vede il tasto', async () => {
     const { html } = await page('/cantieri', EMAILS.board)
     expect(html).not.toContain('Aggiorna il tuo gruppo')
@@ -200,7 +259,7 @@ describe('gli euro', () => {
 describe('/riservata, i tre numeri in cima', () => {
   it('cantieri fermi o in ritardo, scadenze nei prossimi 30 giorni, scadenze senza nessuno', async () => {
     const { html } = await page('/riservata', EMAILS.board)
-    const top = html.slice(html.indexOf('class="numeri"'), html.indexOf('<h2>'))
+    const top = html.slice(html.indexOf('class="numeri"'), html.indexOf('<h2'))
     expect(top).toMatch(/<b>2<\/b>\s*cantieri fermi o in ritardo/)
     expect(top).toMatch(/<b>3<\/b>\s*scadenze nei prossimi 30 giorni/)
     expect(top).toMatch(/<b>1<\/b>\s*scadenza senza nessuno/)
@@ -217,7 +276,7 @@ describe('/riservata, i tre numeri in cima', () => {
   })
   it('sotto i numeri, in rosso e a parole, quanti adempimenti sono in ritardo', async () => {
     const { html } = await page('/riservata', EMAILS.board)
-    const top = html.slice(html.indexOf('class="numeri"'), html.indexOf('<h2>'))
+    const top = html.slice(html.indexOf('class="numeri"'), html.indexOf('<h2'))
     expect(top).toMatch(/class="stato bad"><span class="tri" aria-hidden="true"><\/span>1 adempimento in ritardo</)
   })
 
@@ -231,6 +290,38 @@ describe('/riservata, i tre numeri in cima', () => {
     const none = snapshot.deadlines.filter((item) => item.id !== late!.id)
     const { html } = await page('/riservata', EMAILS.board, { ...snapshot, deadlines: none })
     expect(html).not.toMatch(/adempiment[oi] in ritardo</)
+  })
+})
+
+// Dalla prova in cinque del 26/10: Direttivo e segretario scorrevano troppo per arrivare a ciò che cercavano.
+describe('/riservata, i salti in cima', () => {
+  it('sotto i numeri, un link per sezione, nell’ordine e verso titoli che esistono', async () => {
+    const { html } = await page('/riservata', EMAILS.board)
+    const nav = html.match(/<nav [^>]*aria-label="Su questa pagina"[^>]*>(.*?)<\/nav>/)?.[1] ?? ''
+    expect(nav).not.toBe('')
+    expect(html.indexOf('class="numeri"')).toBeLessThan(html.indexOf('<nav class="salti"'))
+    expect(html.indexOf('<nav class="salti"')).toBeLessThan(html.indexOf('<h2'))
+    const jumps = [
+      ['cantieri', 'Cantieri fermi', 'Cantieri fermi o in ritardo'],
+      ['aiuto', 'Chiedono aiuto', 'Chiedono aiuto'],
+      ['scadenze', 'Scadenze', 'Scadenze dei prossimi 30 giorni'],
+      ['approvare', 'Da approvare', 'Da approvare'],
+      ['impegni', 'Impegni', 'Impegni'],
+      ['soci', 'Soci', 'Soci'],
+      ['delibere', 'Delibere', 'Ultime delibere'],
+      ['questioni', 'Questioni aperte', 'Questioni aperte'],
+      ['budget', 'Budget', 'Budget per cantiere e impegno'],
+    ]
+    const links = [...nav.matchAll(/<a [^>]*href="#([^"]+)"[^>]*>([^<]+)<\/a>/g)].map((m) => [m[1], m[2]])
+    expect(links).toEqual(jumps.map(([id, label]) => [id, label]))
+    for (const [id, , title] of jumps) expect(html).toContain(`<h2 id="${id}">${title}</h2>`)
+  })
+
+  it('il sottotitolo dice chi aggiorna cosa: i cantieri i rappresentanti dei GdL, gli impegni chi li propone e li prende', async () => {
+    const { html } = await page('/riservata', EMAILS.board)
+    expect(html).toContain(
+      '<p class="sub">Il quadro dell’associazione. Cantieri e richieste d’aiuto li aggiornano i rappresentanti dei GdL, gli impegni chi li propone e chi li prende, il resto la segreteria e il tesoriere.</p>',
+    )
   })
 })
 
@@ -459,7 +550,7 @@ describe('/riservata, le questioni aperte', () => {
 describe('/riservata, il budget', () => {
   it('ogni riga ha previsto, speso e percentuale', async () => {
     const { html } = await page('/riservata', EMAILS.board)
-    const budget = section(html, 'Budget per cantiere')
+    const budget = section(html, 'Budget per cantiere e impegno')
     expect(card(budget, 'Ciclo webinar e corsi')).toContain('Previsto 5.000 € · speso 1.200 € (24%)')
     expect(card(budget, 'Sito web')).toContain('Previsto 500 € · speso 500 € (100%)')
     expect(card(budget, 'Raduno di Cervia')).toContain('Previsto 4.771,50 € · speso 4.210 € (88%)')
@@ -467,7 +558,7 @@ describe('/riservata, il budget', () => {
 
   it('il totale è la somma delle righe, e in fondo chi l’ha aggiornato e quando', async () => {
     const { html } = await page('/riservata', EMAILS.board)
-    const budget = section(html, 'Budget per cantiere')
+    const budget = section(html, 'Budget per cantiere e impegno')
     expect(budget).toMatch(/Totale:<\/b> previsto 10\.271,50 € · speso 5\.910 € \(58%\)/)
     expect(budget).toContain(`Aggiornato dal tesoriere il ${formatDay(daysAgo(9), today())}.`)
   })
@@ -483,7 +574,7 @@ describe('/riservata, il budget', () => {
       ],
     }
     const { html } = await page('/riservata', EMAILS.board, { ...snapshot, budget })
-    const text = section(html, 'Budget per cantiere')
+    const text = section(html, 'Budget per cantiere e impegno')
     expect(card(text, 'Mercati contadini')).toContain('Previsto 800 € · speso —<')
     expect(card(text, 'Scambio di semi')).toContain('Previsto — · speso 120 €<')
     expect(card(text, 'Volantini')).toContain('Previsto 0 € · speso 30 €<')
@@ -496,7 +587,7 @@ describe('/riservata, il budget', () => {
       ...reservedFixture(),
       budget: { updatedOn: null, lines: [] },
     })
-    const budget = section(html, 'Budget per cantiere')
+    const budget = section(html, 'Budget per cantiere e impegno')
     expect(budget).toContain('Il tesoriere non ha ancora inserito i numeri.')
     expect(budget).not.toContain('0 €')
     expect(budget).not.toContain('Totale')
@@ -510,10 +601,12 @@ describe('/riservata, l’ordine e le istantanee di T1', () => {
       'Cantieri fermi o in ritardo',
       'Chiedono aiuto',
       'Scadenze dei prossimi 30 giorni',
+      'Da approvare',
+      'Impegni',
       'Ultime delibere',
       'Questioni aperte',
-      'Budget per cantiere',
-    ].map((title) => html.indexOf(`<h2>${title}</h2>`))
+      'Budget per cantiere e impegno',
+    ].map((title) => headingAt(html, title))
     expect(order.every((position) => position > 0)).toBe(true)
     expect([...order].sort((a, b) => a - b)).toEqual(order)
     expect(html.indexOf('Aggiornato il 18 ottobre 2026')).toBeGreaterThan(order.at(-1)!)
@@ -574,5 +667,43 @@ describe('la barra', () => {
 
   it('fra i giorni si conta oggi da Roma', () => {
     expect(daysAgo(0)).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+})
+
+describe('/riservata, i numeri dei soci (T4)', () => {
+  it('i conteggi per stato, il totale e la riga dei rinnovi, senza nomi né mail', async () => {
+    const { html } = await requestPage('/riservata', EMAILS.board)
+    const soci = section(html, 'Soci')
+    expect(soci).toMatch(/<b>150<\/b>\s*in regola/)
+    expect(soci).toMatch(/<b>110<\/b>\s*da rinnovare/)
+    expect(soci).toMatch(/<b>7<\/b>\s*non in regola/)
+    expect(soci).toMatch(new RegExp(`<b>3<\\/b>\\s*già in regola per il ${Number(daysAgo(0).slice(0, 4)) + 1}`))
+    expect(visibleText(soci)).toContain('Soci non receduti: 270 · receduti: 12')
+    expect(visibleText(soci)).toContain('Rinnovi 2027: 150 su 260 (58%) · bersaglio: oltre il 92% al 31/3')
+    expect(visibleText(soci)).toContain('Obiettivo: oltre il 92% al 31/3')
+    expect(soci).not.toContain('@')
+  })
+
+  it('oltre il bersaglio, «Obiettivo raggiunto»; senza la riga dei rinnovi, solo i numeri', async () => {
+    const members = membersFixture()
+    const reached = { ...members, renewals: { year: 2027, renewed: 242, base: 260, percent: 93, until: '03-31' } }
+    const { html } = await requestPage('/riservata', EMAILS.board, { members: reached })
+    expect(visibleText(section(html, 'Soci'))).toContain('Obiettivo raggiunto')
+    const plain = await requestPage('/riservata', EMAILS.board, { members: { ...members, renewals: null } })
+    expect(visibleText(section(plain.html, 'Soci'))).not.toContain('Rinnovi')
+    expect(visibleText(section(plain.html, 'Soci'))).toContain('Soci non receduti: 270')
+  })
+
+  it('senza l’istantanea dei soci lo dice, e il resto della Riservata c’è', async () => {
+    const { html } = await requestPage('/riservata', EMAILS.board, { members: null })
+    expect(html).toContain('I numeri dei soci non sono ancora arrivati dalla segreteria.')
+    expect(headingAt(html, 'Ultime delibere')).toBeGreaterThan(0)
+  })
+
+  it('un’istantanea dei soci con un campo in più, come dei nomi, si legge senza', async () => {
+    const members = { ...membersFixture(), names: ['Anna Esempio'] }
+    const { html } = await requestPage('/riservata', EMAILS.board, { members: members as never })
+    expect(html).not.toContain('Anna Esempio')
+    expect(visibleText(section(html, 'Soci'))).toContain('Soci non receduti: 270')
   })
 })

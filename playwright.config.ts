@@ -12,8 +12,10 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   projects: [
-    { name: 'iphone', use: { ...devices['iPhone 15'] } },
-    { name: 'android', use: { ...devices['Pixel 7'] } },
+    { name: 'iphone', use: { ...devices['iPhone 15'] }, testIgnore: /soci\.spec\.ts/ },
+    { name: 'android', use: { ...devices['Pixel 7'] }, testIgnore: /soci\.spec\.ts/ },
+    // I numeri dei soci cambiano nel KV locale durante la prova: gira da sola, dopo le altre, che li leggono.
+    { name: 'soci', use: { ...devices['Pixel 7'] }, testMatch: /soci\.spec\.ts/, dependencies: ['iphone', 'android'] },
   ],
   webServer: {
     command: 'npm run seed:local -w motore && npm run build -w sito && npm run preview -w sito',

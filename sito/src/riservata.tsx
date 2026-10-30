@@ -1,7 +1,10 @@
-// /riservata, nell'ordine della schermata 4 e del cartamodello: i tre numeri in cima, i cantieri fermi o in ritardo
+// /riservata, nell'ordine della schermata 4 e del cartamodello: i tre numeri in cima e i salti alle sezioni (dalla
+// prova in cinque del 26/10: si scorreva troppo), i cantieri fermi o in ritardo
 // con la quota degli aggiornati (O4), chi chiede aiuto, le scadenze a 30 giorni con gli adempimenti fatti in ritardo
-// (O7), le ultime delibere, le questioni aperte e il budget. Chi segue è un ruolo, mai un nome: lo controlla il motore
-// (readRole), la pagina mostra il ruolo così com'è. Gli impegni arrivano in T6, i numeri dei soci in T4.
+// (O7), da T6 le schede da approvare e gli impegni coi coperti (O10), i numeri dei soci con la riga dei rinnovi (O8,
+// da T4), le ultime delibere, le questioni aperte e il budget per cantiere e impegno. Chi segue è un ruolo, mai un
+// nome: lo controlla il motore (readRole), la pagina mostra il ruolo così com'è. Dei soci arrivano solo i numeri
+// (v1/soci.json): mai un nome né una mail.
 import {
   deadlineCounts,
   deadlinesToWatch,
@@ -10,25 +13,28 @@ import {
   lateDutiesYears,
   projectSignals,
   recentResolutions,
+  RENEWAL_TARGET_PERCENT,
+  renewalsLabel,
   type BudgetLine,
   type CalendarDate,
-  type DeadlineKind,
+  type MembersSnapshot,
   type ReservedBudget,
   type ReservedProject,
   type ReservedResolution,
   type ReservedSnapshot,
   type WatchedDeadline,
 } from '@bussola/condiviso'
-import { formatDay, formatEuro, formatInstant, lateLabel, pastLabel, Signal, staleLabel } from './ui.tsx'
-
-const KIND_LABELS: Record<DeadlineKind, string> = {
-  call: 'Bando',
-  duty: 'Adempimento',
-  tax: 'Fiscale',
-  event: 'Evento',
-  assembly: 'Assemblea',
-  measure: 'Misura',
-}
+import { Commitments, ToApprove } from './impegni.tsx'
+import {
+  formatDay,
+  formatInstant,
+  KIND_LABELS,
+  lateLabel,
+  pastLabel,
+  plannedAndSpent,
+  Signal,
+  staleLabel,
+} from './ui.tsx'
 
 /** Le delibere che si vedono subito; le altre stanno dietro un «details». */
 const SHOWN_RESOLUTIONS = 5
@@ -99,20 +105,6 @@ function Resolution({ resolution, today }: { resolution: ReservedResolution; tod
   )
 }
 
-/** Un importo che il tesoriere non ha scritto è «—», non zero. */
-const money = (amount: number | null) => (amount === null ? '—' : formatEuro(amount))
-
-/**
- * La percentuale dello speso sul previsto, arrotondata; non c'è se manca un importo o il previsto è zero. Lo spazio
- * prima non va a capo: la percentuale non resta sola su una riga.
- */
-const spentShare = (planned: number | null, spent: number | null) =>
-  planned === null || spent === null || planned === 0 ? '' : `\u00a0(${Math.round((spent / planned) * 100)}%)`
-
-/** «5.000 € · speso 1.200 € (24%)»: dopo «Previsto» nelle righe, dopo «previsto» nel totale. */
-const plannedAndSpent = ({ planned, spent }: Pick<BudgetLine, 'planned' | 'spent'>) =>
-  `${money(planned)} · speso ${money(spent)}${spentShare(planned, spent)}`
-
 /** La somma di una colonna, ai centesimi; null se nessuna riga ha l'importo. */
 function total(lines: readonly BudgetLine[], column: 'planned' | 'spent'): number | null {
   const amounts = lines.map((line) => line[column]).filter((amount): amount is number => amount !== null)
@@ -146,12 +138,75 @@ function Budget({ budget, today }: { budget: ReservedBudget; today: CalendarDate
   )
 }
 
-export function RiservataPage(props: { snapshot: ReservedSnapshot | null; today: CalendarDate }) {
+/** I numeri dei soci: i conteggi per stato e, da gennaio ad aprile, la riga dei rinnovi. Solo numeri. */
+function Members({ members, today }: { members: MembersSnapshot | null; today: CalendarDate }) {
+  if (!members)
+    return (
+      <div class="card">
+        <p>I numeri dei soci non sono ancora arrivati dalla segreteria.</p>
+      </div>
+    )
+  const { counts, renewals } = members
+  const year = Number(members.asOf.slice(0, 4))
+  return (
+    <>
+      <div class="numeri">
+        <p class="card">
+          <b>{counts.inGoodStanding}</b> in regola
+        </p>
+        <p class="card">
+          <b>{counts.dueForRenewal}</b> da rinnovare
+        </p>
+        <p class="card">
+          <b>{counts.notInGoodStanding}</b> non in regola
+        </p>
+        <p class="card">
+          <b>{counts.paidAhead}</b> già in regola per il {year + 1}
+        </p>
+      </div>
+      <div class="card">
+        <p class="riga">
+          Soci non receduti: {counts.members} · receduti: {counts.left}
+        </p>
+        {renewals && (
+          <>
+            <p class="quota">
+              <b>{renewalsLabel(renewals)}</b>
+            </p>
+            {renewals.percent > RENEWAL_TARGET_PERCENT ? (
+              <Signal tone="ok" shape="pieno">
+                Obiettivo raggiunto
+              </Signal>
+            ) : (
+              <Signal tone="warn" shape="dot">
+                Obiettivo: oltre il {RENEWAL_TARGET_PERCENT}% al {Number(renewals.until.slice(3))}/
+                {Number(renewals.until.slice(0, 2))}
+              </Signal>
+            )}
+          </>
+        )}
+        <p class="small">
+          Contati il {formatDay(members.asOf, today)}: chi è in regola si calcola dai pagamenti registrati.
+        </p>
+      </div>
+    </>
+  )
+}
+
+export function RiservataPage(props: {
+  snapshot: ReservedSnapshot | null
+  /** I numeri dei soci (da T4); null finché la segreteria non li ha pubblicati. */
+  members?: MembersSnapshot | null
+  today: CalendarDate
+}) {
   const { snapshot, today } = props
   const heading = (
     <>
       <h1>Riservata</h1>
-      <p class="sub">Il quadro dell'associazione, aggiornato da segreteria e tesoriere.</p>
+      <p class="sub">
+        Il quadro dell’associazione. Cantieri e richieste d’aiuto li aggiornano i rappresentanti dei GdL, gli impegni
+        chi li propone e chi li prende, il resto la segreteria e il tesoriere.
+      </p>
     </>
   )
   if (!snapshot)
@@ -205,8 +260,19 @@ export function RiservataPage(props: { snapshot: ReservedSnapshot | null; today:
           {plural(lateDuties, '1 adempimento in ritardo', `${lateDuties} adempimenti in ritardo`)}
         </Signal>
       )}
+      <nav class="salti" aria-label="Su questa pagina">
+        <a href="#cantieri">Cantieri fermi</a>
+        <a href="#aiuto">Chiedono aiuto</a>
+        <a href="#scadenze">Scadenze</a>
+        <a href="#approvare">Da approvare</a>
+        <a href="#impegni">Impegni</a>
+        <a href="#soci">Soci</a>
+        <a href="#delibere">Delibere</a>
+        <a href="#questioni">Questioni aperte</a>
+        <a href="#budget">Budget</a>
+      </nav>
 
-      <h2>Cantieri fermi o in ritardo</h2>
+      <h2 id="cantieri">Cantieri fermi o in ritardo</h2>
       {fresh.percent === null ? (
         <p>Nessun cantiere aperto.</p>
       ) : (
@@ -247,7 +313,7 @@ export function RiservataPage(props: { snapshot: ReservedSnapshot | null; today:
         ))}
       </div>
 
-      <h2>Chiedono aiuto</h2>
+      <h2 id="aiuto">Chiedono aiuto</h2>
       <div class="card">
         {helpWanted.length === 0 && <p>Nessun cantiere chiede aiuto.</p>}
         {helpWanted.map((project) => (
@@ -263,7 +329,7 @@ export function RiservataPage(props: { snapshot: ReservedSnapshot | null; today:
         ))}
       </div>
 
-      <h2>Scadenze dei prossimi 30 giorni</h2>
+      <h2 id="scadenze">Scadenze dei prossimi 30 giorni</h2>
       <div class="card">
         {past.length > 0 ? (
           <>
@@ -284,7 +350,16 @@ export function RiservataPage(props: { snapshot: ReservedSnapshot | null; today:
         ))}
       </div>
 
-      <h2>Ultime delibere</h2>
+      <h2 id="approvare">Da approvare</h2>
+      <ToApprove snapshot={snapshot} today={today} />
+
+      <h2 id="impegni">Impegni</h2>
+      <Commitments snapshot={snapshot} today={today} />
+
+      <h2 id="soci">Soci</h2>
+      <Members members={props.members ?? null} today={today} />
+
+      <h2 id="delibere">Ultime delibere</h2>
       <div class="card">
         {resolutions.length === 0 && <p>Nessuna delibera negli ultimi 12 mesi.</p>}
         {resolutions.slice(0, SHOWN_RESOLUTIONS).map((resolution) => (
@@ -304,7 +379,7 @@ export function RiservataPage(props: { snapshot: ReservedSnapshot | null; today:
         )}
       </div>
 
-      <h2>Questioni aperte</h2>
+      <h2 id="questioni">Questioni aperte</h2>
       <div class="card">
         {snapshot.issues.length === 0 && <p>Nessuna questione aperta.</p>}
         {snapshot.issues.map((issue) => (
@@ -318,7 +393,7 @@ export function RiservataPage(props: { snapshot: ReservedSnapshot | null; today:
         ))}
       </div>
 
-      <h2>Budget per cantiere</h2>
+      <h2 id="budget">Budget per cantiere e impegno</h2>
       <Budget budget={snapshot.budget} today={today} />
 
       <p class="small">Aggiornato il {formatInstant(snapshot.publishedAt)}.</p>

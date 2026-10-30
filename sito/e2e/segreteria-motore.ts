@@ -2,20 +2,41 @@
 // (demo-soci.ts), nuovo per ogni prova, con l'account scelto dalla prova e l'ora ferma al 5/11/2026 alle 10 di Roma.
 // Le mail restano in un array; il Foglio si legge dopo, riga per riga. Nessun dato vero di soci.
 import { romeDate } from '@bussola/condiviso'
-import { DEMO_EMAILS } from '../../motore/src/demo.ts'
+import { createHash } from 'node:crypto'
+import { SHEETS } from '../../motore/src/content.ts'
+import { DEMO_EMAILS, demoSheets } from '../../motore/src/demo.ts'
 import { DEMO_SHARED_ACCOUNT, demoSociSheets } from '../../motore/src/demo-soci.ts'
 import { SOCI_SHEETS } from '../../motore/src/members.ts'
-import { memoryState, memoryWorkbook } from '../../motore/src/memory.ts'
+import { memoryKv, memoryState, memoryWorkbook } from '../../motore/src/memory.ts'
 import {
+  assignMember,
   cancelPayment,
+  cashReceived,
   changePaymentYear,
+  confirmPayment,
+  deadlineDone,
+  ignoreBankLine,
+  importBank,
   openOffice,
   previewPayment,
   recordPayment,
+  saveRegister,
   type OfficeDeps,
 } from '../../motore/src/office.ts'
-import type { CancelInput, ChangeYearInput, OfficeCall, PaymentInput } from '../../motore/src/office-api.ts'
+import type {
+  AssignMemberInput,
+  CancelInput,
+  ChangeYearInput,
+  DeadlineDoneInput,
+  IgnoreBankLineInput,
+  ImportBankInput,
+  OfficeCall,
+  PaymentActionInput,
+  PaymentInput,
+  SaveRegisterInput,
+} from '../../motore/src/office-api.ts'
 import type { Mail } from '../../motore/src/receipt.ts'
+import { REGISTER_STATE_KEY, type RegisterState, type RegisterStore } from '../../motore/src/register.ts'
 import { SHARING_STATE_KEY, type SharingReport } from '../../motore/src/sharing.ts'
 import type { Rispondi } from './segreteria-finta.ts'
 
@@ -50,14 +71,37 @@ export function formatInstant(instant: Date): string {
 type Scheda = { name: string; columns: readonly string[] }
 
 export function motoreVero(
-  opzioni: { email?: string; sheets?: Record<string, unknown[][]>; condivisioni?: SharingReport } = {},
+  opzioni: {
+    email?: string
+    sheets?: Record<string, unknown[][]>
+    /** Il Foglio contenuti; di partenza quello inventato al 5/11/2026. */
+    contenuti?: Record<string, unknown[][]>
+    condivisioni?: SharingReport
+    libro?: RegisterState
+    kvGiu?: boolean
+    driveGiu?: boolean
+  } = {},
 ) {
   const sheets = opzioni.sheets ?? demoSociSheets()
+  const contenuti = opzioni.contenuti ?? demoSheets(ADESSO)
   const mails: Mail[] = []
   const state = memoryState()
   if (opzioni.condivisioni) state.set(SHARING_STATE_KEY, JSON.stringify(opzioni.condivisioni))
+  if (opzioni.libro) state.set(REGISTER_STATE_KEY, JSON.stringify(opzioni.libro))
+  const kv = memoryKv()
+  kv.down = opzioni.kvGiu ?? false
+  const drive: { name: string; rows: unknown[][] }[] = []
+  const registerStore: RegisterStore = {
+    save(name, rows) {
+      if (opzioni.driveGiu) throw new Error('Drive non risponde')
+      drive.push({ name, rows })
+      return `https://docs.google.com/spreadsheets/d/libro-${drive.length}/edit`
+    },
+  }
+  const contentWorkbook = memoryWorkbook(contenuti)
   const deps: OfficeDeps = {
     workbook: memoryWorkbook(sheets),
+    content: () => contentWorkbook,
     email: opzioni.email ?? ACCOUNT.segretario,
     now: ADESSO,
     toCalendarDate: romeDate,
@@ -65,6 +109,10 @@ export function motoreVero(
     withLock: (run) => run(),
     sendMail: (mail) => void mails.push(mail),
     state,
+    kv,
+    scope: 'prova',
+    sha256Hex: (text) => createHash('sha256').update(text, 'utf8').digest('hex'),
+    registerStore,
   }
   /** La prossima chiamata con quel nome lancia, prima o dopo che il motore ha lavorato (la risposta si perde). */
   const guasti = new Map<OfficeCall, 'prima' | 'dopo'>()
@@ -83,6 +131,20 @@ export function motoreVero(
         return cancelPayment(deps, argomento as CancelInput)
       case 'officeChangeYear':
         return changePaymentYear(deps, argomento as ChangeYearInput)
+      case 'officeConfirmPayment':
+        return confirmPayment(deps, argomento as PaymentActionInput)
+      case 'officeCashReceived':
+        return cashReceived(deps, argomento as PaymentActionInput)
+      case 'officeAssignMember':
+        return assignMember(deps, argomento as AssignMemberInput)
+      case 'officeImportBank':
+        return importBank(deps, argomento as ImportBankInput)
+      case 'officeIgnoreBankLine':
+        return ignoreBankLine(deps, argomento as IgnoreBankLineInput)
+      case 'officeDeadlineDone':
+        return deadlineDone(deps, argomento as DeadlineDoneInput)
+      case 'officeSaveRegister':
+        return saveRegister(deps, argomento as SaveRegisterInput)
     }
   }
   const rispondi: Rispondi = async (nome, argomento) => {
@@ -108,7 +170,10 @@ export function motoreVero(
   return {
     rispondi,
     sheets,
+    contenuti,
     mails,
+    kv,
+    drive,
     guasta: (nome: OfficeCall, quando: 'prima' | 'dopo' = 'prima') => void guasti.set(nome, quando),
     ferma: (nome: OfficeCall) => {
       let lascia = () => {}
@@ -117,6 +182,16 @@ export function motoreVero(
     },
     pagamenti: () => righe(SOCI_SHEETS.payments),
     pagamento: (id: string) => righe(SOCI_SHEETS.payments).find((row) => row.id === id),
+    banca: () => righe(SOCI_SHEETS.bank),
+    scadenza: (id: string) => {
+      const [, ...rows] = contenuti[SHEETS.deadlines.name] ?? []
+      const row = rows.find((candidate) => candidate[0] === id)
+      return row && Object.fromEntries(SHEETS.deadlines.columns.map((column, i) => [column, row[i] ?? '']))
+    },
+    misure: () => {
+      const [, ...rows] = contenuti[SHEETS.measures.name] ?? []
+      return rows.map((row) => Object.fromEntries(SHEETS.measures.columns.map((column, i) => [column, row[i] ?? ''])))
+    },
   }
 }
 

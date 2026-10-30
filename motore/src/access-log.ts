@@ -1,4 +1,4 @@
-// Il «Registro di Accessi»: un trigger installabile onEdit, creato dall'account segreteria@, scrive ogni cambio della
+// Il «Registro di Accessi»: un trigger installabile onEdit, creato dall'account della Bussola, scrive ogni cambio della
 // scheda «Accessi» (cartamodello, «Accessi»). Nessuno script scrive in «Accessi»: qui si scrive solo nel registro,
 // che è protetto. «Oggi» del segretario mostra i cambi degli ultimi 30 giorni; il registro li tiene tutti.
 import { daysBetween, type CalendarDate } from '@bussola/condiviso'

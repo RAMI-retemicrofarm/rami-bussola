@@ -6,8 +6,14 @@ import { expect, type Page } from '@playwright/test'
 export async function expectDefinitionOfDone(page: Page) {
   await expect(page.locator('html')).toHaveAttribute('lang', 'it')
 
+  // Gli errori gravi di axe, e il testo fuori da ogni landmark: «region» axe la dà come moderata, ma chi si muove fra i
+  // landmark quel testo non lo incontra mai (la fascia della Riservata ci era finita).
   const { violations } = await new AxeBuilder({ page }).analyze()
-  expect(violations.filter((v) => v.impact === 'serious' || v.impact === 'critical')).toEqual([])
+  expect(
+    violations
+      .filter((v) => v.impact === 'serious' || v.impact === 'critical' || v.id === 'region')
+      .map((v) => ({ id: v.id, nodes: v.nodes.map((node) => node.html) })),
+  ).toEqual([])
 
   // Testo: corpo almeno 16 px, niente sotto 13 px, interlinea del testo almeno 1,4.
   const text = await page.evaluate(() => {

@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { DEMO_EMAILS } from '../../motore/src/demo.ts'
+import { DEMO_SOCI_COUNTS } from '../../motore/src/demo-soci.ts'
 import { expectDefinitionOfDone } from './fatto.ts'
 
 test.use({ extraHTTPHeaders: { 'X-Bussola-Prova-Mail': DEMO_EMAILS.board } })
@@ -7,7 +8,7 @@ test.use({ extraHTTPHeaders: { 'X-Bussola-Prova-Mail': DEMO_EMAILS.board } })
 test('la Riservata mostra i cantieri fermi o in ritardo e chi chiede aiuto', async ({ page }) => {
   await page.goto('/riservata')
   await expect(page.getByText('Solo Direttivo, Coordinamento e segreteria')).toBeVisible()
-  await expect(page.locator('.numeri')).toContainText('2 cantieri fermi o in ritardo')
+  await expect(page.locator('.numeri').first()).toContainText('2 cantieri fermi o in ritardo')
   await expect(page.locator('article', { hasText: 'Scambio di semi autunnale' }).first()).toContainText(
     'In ritardo di 10 giorni',
   )
@@ -21,7 +22,8 @@ const sectionCard = (page: Page, title: string) => page.locator(`h2:text-is("${t
 
 test('in cima i tre numeri, e sotto i cantieri la quota degli aggiornati (O4)', async ({ page }) => {
   await page.goto('/riservata')
-  const numbers = page.locator('.numeri')
+  // Da T4 i numeri dei soci hanno la loro griglia: i tre di cima sono i primi.
+  const numbers = page.locator('.numeri').first()
   await expect(numbers).toContainText('2 cantieri fermi o in ritardo')
   await expect(numbers).toContainText('4 scadenze nei prossimi 30 giorni')
   await expect(numbers).toContainText('1 scadenza senza nessuno')
@@ -93,9 +95,11 @@ test('le questioni aperte, con chi le segue', async ({ page }) => {
   ).toHaveText('Nessuno la segue')
 })
 
-test('il budget per cantiere: previsto, speso, percentuale, il totale e chi l’ha aggiornato', async ({ page }) => {
+test('il budget per cantiere e impegno: previsto, speso, percentuale, il totale e chi l’ha aggiornato', async ({
+  page,
+}) => {
   await page.goto('/riservata')
-  const budget = sectionCard(page, 'Budget per cantiere')
+  const budget = sectionCard(page, 'Budget per cantiere e impegno')
   await expect(budget.locator('article', { hasText: 'Ciclo webinar e corsi' })).toContainText(
     'Previsto 5.000 € · speso 1.200 € (24%)',
   )
@@ -103,13 +107,106 @@ test('il budget per cantiere: previsto, speso, percentuale, il totale e chi l’
   await expect(budget.locator('article', { hasText: 'Raduno di Cervia' })).toContainText(
     'Previsto 4.771,50 € · speso 4.210 € (88%)',
   )
-  await expect(budget).toContainText('Totale: previsto 10.271,50 € · speso 5.910 € (58%)')
+  await expect(budget.locator('article', { hasText: 'Tesseramento online (IMP-0003)' })).toContainText(
+    'Previsto 800 € · speso 200 € (25%)',
+  )
+  await expect(budget).toContainText('Totale: previsto 11.671,50 € · speso 6.410 € (55%)')
   await expect(budget).toContainText(/Aggiornato dal tesoriere il \d{1,2} \w+/)
+})
+
+test('i numeri dei soci, dal Foglio soci inventato: solo conteggi, nessun nome', async ({ page }) => {
+  await page.goto('/riservata')
+  const soci = page.locator('h2:text-is("Soci") ~ .numeri').first()
+  const c = DEMO_SOCI_COUNTS
+  await expect(soci.locator('.card')).toHaveText([
+    `${c.inGoodStanding} in regola`,
+    `${c.dueForRenewal} da rinnovare`,
+    `${c.notInGoodStanding} non in regola`,
+    new RegExp(`^${c.paidAhead} già in regola per il \\d{4}$`),
+  ])
+  await expect(page.getByText(`Soci non receduti: ${c.members} · receduti: ${c.left}`)).toBeVisible()
+  await expect(page.locator('main')).not.toContainText('Abate')
+  await expect(page.locator('main')).not.toContainText('@example.org')
+  // La riga dei rinnovi, che c'è solo da gennaio ad aprile, sta in soci.spec.ts: cambia l'istantanea nel KV.
+})
+
+// --- T6: gli impegni. Il Foglio inventato ha dieci impegni dell'anno; la stesura di prova di «La cura della Bussola»
+// è passata dal Modulo, ed è in «Da approvare».
+
+test('«Da approvare»: chi aspetta il Coordinamento, chi aspetta il Direttivo, con le date, e il respinto col motivo', async ({
+  page,
+}) => {
+  await page.goto('/riservata')
+  const card = sectionCard(page, 'Da approvare')
+  await expect(card.locator('.gruppo')).toHaveText(['Aspettano il Coordinamento', 'Aspettano il Direttivo', 'Respinti'])
+  // Nell'ordine: le due proposte, quella approvata dal Coordinamento, il respinto.
+  await expect(card.locator('article h3')).toHaveText([
+    'La cura della Bussola',
+    'Tesseramento online',
+    'Corso di potatura',
+    'Stand alla fiera regionale',
+  ])
+  await expect(card.locator('article', { hasText: 'La cura della Bussola' })).toContainText(/Proposto il \d{1,2} \w+/)
+  await expect(card.locator('article', { hasText: 'Tesseramento online' })).toContainText(/Proposto il \d{1,2} \w+/)
+  await expect(card.locator('article', { hasText: 'Corso di potatura' })).toContainText(
+    /Approvato dal Coordinamento il \d{1,2} \w+/,
+  )
+  await expect(card.locator('article', { hasText: 'Stand alla fiera regionale' })).toContainText(
+    'Motivo: Il Coordinamento preferisce aspettare il bando di primavera.',
+  )
+})
+
+test('«Impegni»: i coperti dell’anno, il compenso senza scheda approvata e il tasto del Modulo', async ({ page }) => {
+  await page.goto('/riservata')
+  await expect(page.getByText('Impegni coperti: 3 su 8 (38%)', { exact: true })).toBeVisible()
+  const card = sectionCard(page, 'Impegni')
+  await expect(card.locator('article', { hasText: 'Tesseramento online' }).locator('.stato.bad')).toHaveText(
+    'Compenso senza scheda approvata',
+  )
+  await expect(card.locator('.stato.bad')).toHaveCount(1)
+  await expect(card.locator('article', { hasText: 'Banco dei semi agli scambi' })).toContainText(
+    'Preso · una persona di Semi e Biodiversità',
+  )
+  await expect(page.locator('main')).not.toContainText(/fittizi/i)
+  await expect(page.getByRole('link', { name: 'Proponi un impegno' })).toHaveAttribute(
+    'href',
+    'https://docs.google.com/forms/d/e/1FAIpQLSimpegno/viewform',
+  )
+})
+
+test('la scheda in sette blocchi, dalla Riservata, e si torna', async ({ page }) => {
+  await page.goto('/riservata')
+  await page.getByRole('link', { name: 'Apri la scheda: La cura della Bussola' }).first().click()
+  await expect(page).toHaveURL(/\/riservata\/impegni\/IMP-0001$/)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('La cura della Bussola')
+  await expect(page.getByRole('heading', { level: 2 })).toHaveText([
+    '1. Cosa si fa',
+    '2. Per quale cantiere o GdL',
+    '3. Quanto tempo',
+    '4. Cosa si consegna e chi verifica',
+    '5. Come si è pagati',
+    '6. Chi l’ha approvato',
+    '7. Se serve smettere',
+  ])
+  await expect(page.locator('main')).toContainText('Bozza di prova.')
+  // Gli a capo scritti nel Modulo restano nei testi liberi della scheda.
+  await expect(page.locator('main .testo-libero').first()).toHaveCSS('white-space', 'pre-line')
+  await expect(page.locator('main')).toContainText('socio n. 12 · Direttivo')
+  await expect(page.locator('main')).not.toContainText('@')
+  await page.getByRole('link', { name: 'Torna alla Riservata' }).click()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Riservata')
+})
+
+test('la scheda di un impegno rispetta la definizione di fatto', async ({ page }) => {
+  await page.goto('/riservata/impegni/IMP-0003')
+  await expect(page.getByText('Compenso senza scheda approvata')).toBeVisible()
+  await expectDefinitionOfDone(page)
 })
 
 test('dalla barra si passa ai Cantieri e si torna', async ({ page }) => {
   await page.goto('/riservata')
-  await page.getByRole('link', { name: 'Cantieri' }).click()
+  // Nella barra: in cima alla pagina c'è anche il salto «Cantieri fermi».
+  await page.getByRole('navigation', { name: 'Sezioni' }).getByRole('link', { name: 'Cantieri' }).click()
   await expect(page).toHaveURL(/\/cantieri$/)
   await page.getByRole('link', { name: 'Riservata' }).click()
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Riservata')

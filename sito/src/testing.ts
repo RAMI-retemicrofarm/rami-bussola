@@ -1,8 +1,20 @@
-// Gli attrezzi delle prove della vetrina: le chiavi di Access finte, il KV finto e un'istantanea riservata con date
-// contate da oggi. Non entra nella Function: la importano solo i test.
-import { romeDate, type Deadline, type ReservedSnapshot } from '@bussola/condiviso'
+// Gli attrezzi delle prove della vetrina: le chiavi di Access finte, il KV finto e le istantanee, riservata e del
+// sito, con date contate da oggi. Non entra nella Function: la importano solo i test.
+import {
+  MEMBERS_KEY,
+  RESERVED_KEY,
+  romeDate,
+  SITE_KEY,
+  type Deadline,
+  type MembersSnapshot,
+  type ReservedCommitment,
+  type ReservedSnapshot,
+  type SiteLink,
+  type SiteSnapshot,
+} from '@bussola/condiviso'
 import { sign } from 'hono/jwt'
 import { vi } from 'vitest'
+import { sha256Hex } from './identity.ts'
 
 export const TEAM = 'rami.cloudflareaccess.com'
 export const AUD = 'aud-di-prova'
@@ -10,6 +22,8 @@ export const AUD = 'aud-di-prova'
 export const EMAILS = {
   rep: 'rappresentante.orti@example.org',
   board: 'direttivo@example.org',
+  office: 'segreteria@example.org',
+  keeper: 'cura@example.org',
   outsider: 'nessuno@example.org',
 } as const
 
@@ -48,9 +62,39 @@ export const accessJwt = (claims: Record<string, unknown> = {}) =>
     'RS256',
   )
 
-export function testEnv(values: Record<string, unknown> = {}, aud = AUD) {
-  const BUSSOLA = { get: async (key: string) => values[key] ?? null } as unknown as KVNamespace
-  return { BUSSOLA, ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD: aud }
+export type MemoryKvNamespace = KVNamespace & {
+  /** Il valore e la scadenza in secondi di ogni chiave. */
+  store: Map<string, { value: string; ttl: number | null }>
+  puts: string[]
+}
+
+/** Un KV in memoria, con `get` e `put` come quelli di Workers: quello che serve alla vetrina. */
+export function memoryKvNamespace(values: Record<string, unknown> = {}): MemoryKvNamespace {
+  const store = new Map(
+    Object.entries(values).map(([key, value]) => [
+      key,
+      { value: typeof value === 'string' ? value : JSON.stringify(value), ttl: null as number | null },
+    ]),
+  )
+  const puts: string[] = []
+  const kv = {
+    store,
+    puts,
+    async get(key: string, type?: string) {
+      const item = store.get(key)
+      if (!item) return null
+      return type === 'json' ? JSON.parse(item.value) : item.value
+    },
+    async put(key: string, value: string, options?: { expirationTtl?: number }) {
+      store.set(key, { value, ttl: options?.expirationTtl ?? null })
+      puts.push(key)
+    },
+  }
+  return kv as unknown as MemoryKvNamespace
+}
+
+export function testEnv(values: Record<string, unknown> = {}, aud = AUD, kv = memoryKvNamespace(values)) {
+  return { BUSSOLA: kv as KVNamespace, ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD: aud }
 }
 
 /**
@@ -66,6 +110,18 @@ export const daysAgo = (days: number) => {
 const FORM = 'https://docs.google.com/forms/d/e/prova/viewform?usp=pp_url'
 const link = (group: string, code: string, project?: string) =>
   `${FORM}&entry.1=${encodeURIComponent(group)}${project ? `&entry.2=${encodeURIComponent(project)}` : ''}&entry.3=${code}`
+const meetingLink = (group: string, code: string) =>
+  `https://docs.google.com/forms/d/e/incontro/viewform?usp=pp_url&entry.4=${encodeURIComponent(group)}&entry.5=${code}`
+
+/** Giorno e ora di Roma fra `days` giorni. */
+export const at = (days: number, time: string) => `${daysAgo(-days)}T${time}`
+
+export const MEET = {
+  ortiInternal: 'https://meet.google.com/orti-solo-gruppo',
+  orti: 'https://meet.google.com/orti-aperto-soci',
+  semi: 'https://meet.google.com/semi-aperto-soci',
+  coordination: 'https://meet.google.com/coordinamento-prova',
+} as const
 
 const deadline = (fields: Partial<Deadline> & { id: string; what: string; dueOn: string }): Deadline => ({
   kind: 'duty',
@@ -88,6 +144,113 @@ const resolution = (
   ...fields,
 })
 
+/** Un impegno della Riservata: la scheda vuota, coi campi dati. */
+export const commitment = (
+  fields: Partial<ReservedCommitment> & Pick<ReservedCommitment, 'id' | 'title' | 'status'>,
+): ReservedCommitment => ({
+  year: Number(daysAgo(0).slice(0, 4)),
+  outcome: null,
+  rejectionReason: '',
+  what: '',
+  forLabel: 'Comunicazione',
+  groupId: 'GDL-comunicazione',
+  days: null,
+  until: null,
+  term: null,
+  deliverables: '',
+  verifierNumber: null,
+  pay: null,
+  fee: null,
+  feeVisible: false,
+  proposedBy: null,
+  proposedOn: null,
+  coordinationOn: null,
+  ratifiedOn: null,
+  howToLeave: '',
+  howToRevoke: '',
+  assigneeNumber: null,
+  assigneeRole: '',
+  substituteNumber: null,
+  planned: null,
+  spent: null,
+  ...fields,
+})
+
+export const COMMITMENT_FORM_URL = 'https://docs.google.com/forms/d/e/impegno/viewform'
+
+/**
+ * I sette impegni dell'anno dei criteri di T6: uno da scrivere, uno proposto (pagato prima della ratifica), uno
+ * respinto, uno aperto, uno preso, uno chiuso completato e uno chiuso ritirato.
+ */
+export const commitmentsFixture = (): ReservedCommitment[] => [
+  commitment({ id: 'IMP-0001', title: 'La cura della Bussola', status: 'toWrite' }),
+  commitment({
+    id: 'IMP-0002',
+    title: 'Tesseramento online',
+    status: 'proposed',
+    what: 'Preparare il modulo di iscrizione online e seguirne il primo anno.',
+    days: 8,
+    until: daysAgo(-120),
+    term: 'project',
+    deliverables: 'Il modulo di iscrizione, provato con dieci soci.',
+    verifierNumber: '12',
+    pay: 'paid',
+    fee: 800,
+    proposedBy: '34',
+    proposedOn: daysAgo(6),
+    howToLeave: 'Con due settimane di preavviso.',
+    howToRevoke: 'Il Direttivo, con una delibera.',
+    planned: 800,
+    spent: 200,
+  }),
+  commitment({
+    id: 'IMP-0003',
+    title: 'Stand alla fiera regionale',
+    status: 'rejected',
+    proposedOn: daysAgo(25),
+    rejectionReason: 'Il Coordinamento preferisce aspettare il bando di primavera.',
+  }),
+  commitment({
+    id: 'IMP-0004',
+    title: 'Mappa dei semenzai',
+    status: 'open',
+    forLabel: 'Orti e Suoli',
+    groupId: 'GDL-orti',
+    days: 5,
+    term: 'project',
+    pay: 'volunteer',
+    ratifiedOn: daysAgo(30),
+  }),
+  commitment({
+    id: 'IMP-0005',
+    title: 'Banco dei semi agli scambi',
+    status: 'taken',
+    forLabel: 'Semi e Biodiversità',
+    groupId: 'GDL-semi',
+    days: 6,
+    term: 'ongoing',
+    pay: 'expenses',
+    ratifiedOn: daysAgo(60),
+    assigneeNumber: '34',
+    assigneeRole: 'una persona di Semi e Biodiversità',
+  }),
+  commitment({
+    id: 'IMP-0006',
+    title: 'Logistica del Raduno',
+    status: 'closed',
+    outcome: 'completed',
+    ratifiedOn: daysAgo(150),
+    assigneeNumber: '34',
+  }),
+  commitment({
+    id: 'IMP-0007',
+    title: 'Video dei webinar',
+    status: 'closed',
+    outcome: 'withdrawn',
+    ratifiedOn: daysAgo(120),
+  }),
+]
+
 export function reservedFixture(): ReservedSnapshot {
   // L'anno di oggi: la scadenza fatta in ritardo ci deve stare dentro, anche a gennaio.
   const year = daysAgo(0).slice(0, 4)
@@ -107,9 +270,24 @@ export function reservedFixture(): ReservedSnapshot {
     publishedAt: '2026-10-18T19:40:00.000Z',
     staleDays: 30,
     groups: [
-      { id: 'GDL-comunicazione', name: 'Comunicazione', newProjectUrl: link('Comunicazione', 'k-com') },
-      { id: 'GDL-orti', name: 'Orti e Suoli', newProjectUrl: link('Orti e Suoli', 'k-orti') },
-      { id: 'GDL-semi', name: 'Semi e Biodiversità', newProjectUrl: link('Semi e Biodiversità', 'k-semi') },
+      {
+        id: 'GDL-comunicazione',
+        name: 'Comunicazione',
+        newProjectUrl: link('Comunicazione', 'k-com'),
+        newMeetingUrl: meetingLink('Comunicazione', 'k-com'),
+      },
+      {
+        id: 'GDL-orti',
+        name: 'Orti e Suoli',
+        newProjectUrl: link('Orti e Suoli', 'k-orti'),
+        newMeetingUrl: meetingLink('Orti e Suoli', 'k-orti'),
+      },
+      {
+        id: 'GDL-semi',
+        name: 'Semi e Biodiversità',
+        newProjectUrl: link('Semi e Biodiversità', 'k-semi'),
+        newMeetingUrl: meetingLink('Semi e Biodiversità', 'k-semi'),
+      },
     ],
     projects: [
       project({ id: 'CAN-0001', title: 'Rete dei mercati contadini' }),
@@ -208,5 +386,165 @@ export function reservedFixture(): ReservedSnapshot {
         { label: 'Raduno di Cervia', planned: 4771.5, spent: 4210 },
       ],
     },
+    // Del gruppo Orti uno solo per il gruppo, fra 3 giorni, e uno aperto ai soci fra 7; uno del Coordinamento.
+    meetings: [
+      { groupId: 'Coordinamento', startsAt: at(2, '21:00'), meetUrl: MEET.coordination, membersCanSee: false },
+      { groupId: 'GDL-orti', startsAt: at(3, '18:30'), meetUrl: MEET.ortiInternal, membersCanSee: false },
+      { groupId: 'GDL-orti', startsAt: at(7, '18:30'), meetUrl: MEET.orti, membersCanSee: true },
+      { groupId: 'GDL-semi', startsAt: at(10, '18:00'), meetUrl: MEET.semi, membersCanSee: true },
+    ],
+    commitments: commitmentsFixture(),
+    commitmentFormUrl: COMMITMENT_FORM_URL,
   }
 }
+
+export const OFFICE_URL = 'https://docs.google.com/forms/d/e/segreteria/viewform'
+
+/** L'istantanea del sito: i gruppi, gli incontri visibili ai soci, i link, le scadenze dei soci, il primo giorno. */
+export function siteFixture(): SiteSnapshot {
+  return {
+    version: 1,
+    publishedAt: '2026-10-18T19:40:00.000Z',
+    officeUrl: OFFICE_URL,
+    groups: [
+      {
+        id: 'GDL-comunicazione',
+        name: 'Comunicazione',
+        mission: 'Raccontare la rete: sito, newsletter e social.',
+        howToJoin: 'Scrivi alla segreteria.',
+        whereWhen: 'Online, il primo lunedì del mese.',
+        chatUrl: null,
+        referents: [],
+      },
+      {
+        id: 'GDL-orti',
+        name: 'Orti e Suoli',
+        mission: 'Mettere in rete gli orti dei soci e imparare insieme a curare il suolo.',
+        howToJoin: 'Vieni a un incontro online: non serve iscriversi.',
+        whereWhen: 'Online, un giovedì al mese alle 18:30.',
+        chatUrl: 'https://chat.example.org/orti-e-suoli',
+        referents: [
+          { name: 'Lia Prova', role: 'referente' },
+          { name: null, role: 'co-referente' },
+        ],
+      },
+      {
+        id: 'GDL-semi',
+        name: 'Semi e Biodiversità',
+        mission: 'Custodire e scambiare i semi delle varietà locali.',
+        howToJoin: 'Scrivi alla segreteria: ti presentiamo al gruppo.',
+        whereWhen: 'Online ogni due settimane, e in presenza agli scambi di semi.',
+        chatUrl: null,
+        referents: [{ name: 'Teo Finto', role: 'referente' }],
+      },
+    ],
+    meetings: [
+      { groupId: 'GDL-orti', startsAt: at(7, '18:30'), meetUrl: MEET.orti },
+      { groupId: 'GDL-semi', startsAt: at(10, '18:00'), meetUrl: MEET.semi },
+    ],
+    links: [
+      { title: 'Calendario degli incontri', url: 'https://calendar.example.org/rami', audience: 'all', groupId: null },
+      {
+        title: 'Modulo per proporre un evento',
+        url: 'https://docs.google.com/forms/d/e/evento/viewform',
+        audience: 'members',
+        groupId: null,
+      },
+      {
+        title: 'Cartella dei semenzai',
+        url: 'https://drive.google.com/drive/folders/orti',
+        audience: 'group',
+        groupId: 'GDL-orti',
+      },
+      {
+        title: 'Verbali del Coordinamento',
+        url: 'https://drive.google.com/drive/folders/coordinamento',
+        audience: 'coordination',
+        groupId: null,
+      },
+    ],
+    // Una a 12 giorni, una a 90, una a 91 (fuori) e una passata, che il motore non manda ma la pagina sa scartare.
+    deadlines: [
+      { id: 'SCA-0099', what: 'Iscrizioni al corso chiuse', kind: 'event', dueOn: daysAgo(1) },
+      { id: 'SCA-0002', what: 'Convocazione dell’Assemblea', kind: 'assembly', dueOn: daysAgo(-12) },
+      { id: 'SCA-0011', what: 'Raduno di primavera', kind: 'event', dueOn: daysAgo(-90) },
+      { id: 'SCA-0012', what: 'Assemblea dei soci di primavera', kind: 'assembly', dueOn: daysAgo(-91) },
+    ],
+    firstDay: [
+      { title: 'Scegli un gruppo', text: 'Guarda i Gruppi: ognuno dice cosa fa e come si partecipa.', url: null },
+      { title: 'Vieni a un incontro', text: 'Il prossimo incontro di ogni gruppo è sulla sua pagina.', url: null },
+      {
+        title: 'Guarda il calendario',
+        text: 'Tutti gli incontri, in un posto.',
+        url: 'https://calendar.example.org/rami',
+      },
+    ],
+    commitments: [],
+  }
+}
+
+/** I numeri dei soci (da T4), con la riga dei rinnovi come in febbraio. */
+export function membersFixture(): MembersSnapshot {
+  return {
+    version: 1,
+    publishedAt: '2026-10-18T19:40:00.000Z',
+    asOf: daysAgo(0),
+    counts: { inGoodStanding: 150, paidAhead: 3, dueForRenewal: 110, notInGoodStanding: 7, left: 12, members: 270 },
+    renewals: { year: 2027, renewed: 150, base: 260, percent: 58, until: '03-31' },
+  }
+}
+
+/** La cartella di un secondo GdL, oltre a quella di Orti e Suoli: per provare chi trova quale indirizzo. */
+export const SEMI_FOLDER: SiteLink = {
+  title: 'Cartella dei semi',
+  url: 'https://drive.google.com/drive/folders/semi',
+  audience: 'group',
+  groupId: 'GDL-semi',
+}
+
+/** L'istantanea riservata con anche la segreteria (EMAILS.office): entra, ma non è di un GdL né del Coordinamento. */
+export async function reservedWithOffice(): Promise<ReservedSnapshot> {
+  const snapshot = reservedFixture()
+  const office = {
+    fingerprint: await sha256Hex(EMAILS.office),
+    memberNumber: null,
+    roles: ['office' as const],
+    groupId: null,
+  }
+  return { ...snapshot, people: [...snapshot.people, office] }
+}
+
+/** Una pagina chiesta in locale come la persona con quella mail, con le tre istantanee in un KV finto. */
+export async function requestPage(
+  path: string,
+  email?: string,
+  data: { reserved?: ReservedSnapshot | null; site?: SiteSnapshot | null; members?: MembersSnapshot | null } = {},
+  kv?: MemoryKvNamespace,
+) {
+  const { default: app } = await import('./index.tsx')
+  const reserved = data.reserved === undefined ? reservedFixture() : data.reserved
+  const site = data.site === undefined ? siteFixture() : data.site
+  const members = data.members === undefined ? membersFixture() : data.members
+  const values = {
+    ...(reserved && { [RESERVED_KEY]: reserved }),
+    ...(site && { [SITE_KEY]: site }),
+    ...(members && { [MEMBERS_KEY]: members }),
+  }
+  const store = kv ?? memoryKvNamespace()
+  for (const [key, value] of Object.entries(values)) store.store.set(key, { value: JSON.stringify(value), ttl: null })
+  const res = await app.request(
+    `http://localhost:8788${path}`,
+    { headers: email ? { 'X-Bussola-Prova-Mail': email } : {} },
+    testEnv(values, AUD, store),
+  )
+  return { res, html: await res.text() }
+}
+
+/** Il testo di una pagina, senza i tag: per cercare le frasi come le legge una persona. */
+export const visibleText = (html: string) =>
+  html
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')

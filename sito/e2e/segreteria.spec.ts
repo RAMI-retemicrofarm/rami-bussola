@@ -1,10 +1,12 @@
 import { expect, test, type Page } from '@playwright/test'
-import { DEMO_EMAILS } from '../../motore/src/demo.ts'
-import { DEMO_INSTRUCTIONS_URL, DEMO_OFFICE, DEMO_SOCI_COUNTS } from '../../motore/src/demo-soci.ts'
+import { SHEETS } from '../../motore/src/content.ts'
+import { DEMO_EMAILS, demoSheets } from '../../motore/src/demo.ts'
+import { DEMO_INSTRUCTIONS_URL, DEMO_OFFICE, DEMO_SOCI_COUNTS, demoSociSheets } from '../../motore/src/demo-soci.ts'
+import { SOCI_SHEETS } from '../../motore/src/members.ts'
 import type { OfficeCall, PaymentInput } from '../../motore/src/office-api.ts'
 import { expectDefinitionOfDone } from './fatto.ts'
 import { apriSegreteria, type Rispondi } from './segreteria-finta.ts'
-import { ACCOUNT, giorno, motoreVero, sociInventati, type MotoreVero } from './segreteria-motore.ts'
+import { ACCOUNT, ADESSO, giorno, motoreVero, sociInventati, type MotoreVero } from './segreteria-motore.ts'
 
 // La pagina della segreteria (T3, flusso D) col motore vero dietro un `google.script.run` finto: le funzioni di
 // office.ts su un Foglio soci inventato (demo-soci.ts), nuovo per ogni prova, al 5/11/2026. Si guarda la pagina e poi
@@ -135,7 +137,8 @@ test('la part-time sull’account condiviso: «Chi sei?», ricordato dopo il ric
   await tasto(page, PART_TIME).click()
   await expect(titolo(page)).toHaveText('Soci')
   await expect(page.locator('#sei')).toHaveText(`Sei ${PART_TIME}·Cambia`)
-  await expect(page.locator('.sezioni')).toHaveCount(0)
+  // Da T4 anche la part-time ha Pagamenti e Oggi; senza le voci di «Accessi».
+  await expect(page.locator('.sezioni button')).toHaveText(['Soci', 'Pagamenti', /^Oggi/])
   await page.reload()
   await expect(titolo(page)).toHaveText('Soci')
   expect(argomenti('officeOpen')).toEqual(['', PART_TIME, PART_TIME])
@@ -195,7 +198,7 @@ test('«Registri come … · Cambia» torna al «Chi sei?», e il modulo resta c
   expect(motore.pagamento('P-2026-0016')).toMatchObject({ 'registrato da': TESORIERE, stato: 'registrato' })
   expect(motore.mails.map((mail) => mail.to)).toEqual(['elisa.santoro@example.org'])
   await tasto(page, 'Torna ai soci').click()
-  await expect(page.locator('.sezioni')).toHaveCount(0)
+  await expect(page.locator('.sezioni button')).toHaveCount(3)
   await expect(page.locator('#sei')).toHaveText(`Sei ${TESORIERE}·Cambia`)
 })
 
@@ -346,7 +349,7 @@ test('il possibile doppione non scrive niente; «È un altro pagamento» con la 
   await tasto(page, 'Registra e manda la mail').click()
   await expect(
     page.getByText(
-      'Questo pagamento sembra già registrato: Nicola Testa, 30 €, rif. 0013, registrato dal tesoriere il 15/03. Non lo registro due volte.',
+      'Questo pagamento sembra già registrato: Nicola Testa, 30 €, rif. 60013, registrato dal tesoriere il 15/03. Non lo registro due volte.',
     ),
   ).toBeVisible()
   await expect(titolo(page)).toHaveText('Possibile doppione')
@@ -427,11 +430,11 @@ test('il socio receduto: l’avviso prima di registrare, e la conferma non dice 
 test('lo stesso riferimento con un altro socio non è un doppione', async ({ page }) => {
   const motore = motoreVero()
   await apri(page, motore)
-  // 5501 è il bonifico di 60 € di Giulia e Tommaso Neri.
-  await compila(page, { cerca: 'bellini', scegli: 'Marco Bellini · numero 2' }, { riferimento: '5501' })
+  // 55001 è il bonifico di 60 € di Giulia e Tommaso Neri.
+  await compila(page, { cerca: 'bellini', scegli: 'Marco Bellini · numero 2' }, { riferimento: '55001' })
   await tasto(page, 'Registra e manda la mail').click()
   await expect(page.getByText('Registrato. Marco Bellini è in regola per il 2026.')).toBeVisible()
-  expect(motore.pagamenti().filter((riga) => riga.riferimento === '5501')).toHaveLength(3)
+  expect(motore.pagamenti().filter((riga) => riga.riferimento === '55001')).toHaveLength(3)
   expect(motore.mails.map((mail) => mail.to)).toEqual(['marco.bellini@example.org'])
 })
 
@@ -566,9 +569,10 @@ test('«Oggi» del segretario: il cambio in «Accessi» di 10 giorni fa sì, que
     },
   })
   await apri(page, motore, { rispondi: (nome, argomento) => motore.rispondi(nome, argomento) })
-  // Da Soci si vede già che c'è da guardare: parola e triangolo, non solo il colore.
-  const oggi = page.locator('.sezioni button').nth(1)
-  await expect(oggi).toHaveText('Oggi · 1 da guardare')
+  // Da Soci si vede già che c'è da guardare: parola e triangolo, non solo il colore. Con la condivisione fuori
+  // dall'elenco conta anche l'adempimento in ritardo del Foglio contenuti inventato (SCA-0001).
+  const oggi = page.locator('.sezioni button').nth(2)
+  await expect(oggi).toHaveText('Oggi · 2 da guardare')
   await expect(oggi.locator('.stato.warn .tri')).toHaveCount(1)
   await oggi.click()
   await expect(titolo(page)).toHaveText('Oggi')
@@ -580,7 +584,9 @@ test('«Oggi» del segretario: il cambio in «Accessi» di 10 giorni fa sì, que
   await expect(page.getByText('05/10')).toHaveCount(0)
   await expect(page.getByText('Il Foglio soci', { exact: true })).toBeVisible()
   await expect(page.getByText('qualcuno@example.org')).toBeVisible()
-  await expect(page.locator('.stato.bad')).toHaveText("Fuori dall'elenco, può modificare")
+  await expect(page.locator('h2:text-is("Condivisioni fuori dall\'elenco") ~ .card .stato.bad')).toHaveText(
+    "Fuori dall'elenco, può modificare",
+  )
   await expect(
     page.getByText("Togli l'accesso dal Foglio soci, oppure aggiungi la persona in «Accessi».", { exact: true }),
   ).toBeVisible()
@@ -591,7 +597,7 @@ test('«Oggi» del segretario: il cambio in «Accessi» di 10 giorni fa sì, que
 
   motore = motoreVero({ condivisioni: { checkedOn: '2026-11-05', findings: [] } })
   await page.reload()
-  await expect(oggi).toHaveText('Oggi')
+  await expect(oggi).toHaveText('Oggi · 1 da guardare')
   await oggi.click()
   await expect(page.getByText("Nessuna condivisione fuori dall'elenco. Ultimo controllo: 05/11/2026.")).toBeVisible()
 
@@ -600,11 +606,11 @@ test('«Oggi» del segretario: il cambio in «Accessi» di 10 giorni fa sì, que
   await page.reload()
   await oggi.click()
   await expect(page.getByText("Nessuna condivisione fuori dall'elenco. Ultimo controllo: 03/11/2026.")).toBeVisible()
-  await expect(page.locator('main .stato.warn')).toHaveCount(0)
+  await expect(page.locator('main > .stato.warn')).toHaveCount(0)
   motore = motoreVero({ condivisioni: { checkedOn: '2026-11-02', findings: [] } })
   await page.reload()
   await oggi.click()
-  await expect(page.locator('main .stato.warn')).toHaveText(
+  await expect(page.locator('main > .stato.warn')).toHaveText(
     'Il controllo delle condivisioni non gira dal 02/11/2026: avvisa chi cura la Bussola.',
   )
   await fatto(page)
@@ -612,9 +618,408 @@ test('«Oggi» del segretario: il cambio in «Accessi» di 10 giorni fa sì, que
   motore = motoreVero()
   await page.reload()
   await oggi.click()
-  await expect(page.locator('main .stato.warn')).toHaveText(
+  await expect(page.locator('main > .stato.warn')).toHaveText(
     'Il controllo delle condivisioni non ha ancora girato: avvisa chi cura la Bussola.',
   )
+})
+
+// --- T4: «Oggi» completa, Pagamenti, il tesoriere, le scadenze e il libro soci.
+
+const sezione = (page: Page, titolo: string) => page.locator(`h2:text-is("${titolo}") ~ *`)
+const cardDopo = (page: Page, titolo: string) => page.locator(`h2:text-is("${titolo}") + .card`)
+
+test('«Oggi» completa: i numeri, i pagamenti da seguire, l’ultima registrazione, le scadenze col ritardo in rosso, «Da controllare», «Salute», il libro soci', async ({
+  page,
+}) => {
+  const motore = motoreVero()
+  await apri(page, motore)
+  await page.locator('.sezioni button').nth(2).click()
+  await expect(titolo(page)).toHaveText('Oggi')
+  const c = DEMO_SOCI_COUNTS
+  await expect(page.locator('.numeri .card')).toHaveText([
+    `${c.inGoodStanding}In regola`,
+    `${c.dueForRenewal}Da rinnovare`,
+    `${c.notInGoodStanding}Non in regola`,
+    `${c.paidAhead}Già in regola per il 2027`,
+  ])
+  await expect(page.getByText(`Soci non receduti: ${c.members} · receduti: ${c.left}`, { exact: true })).toBeVisible()
+  const seguire = cardDopo(page, 'Pagamenti da seguire')
+  await expect(seguire).toContainText('2 da abbinare')
+  await expect(seguire).toContainText('1 pagamento in attesa del tesoriere')
+  await expect(seguire).toContainText('2 pagamenti in contanti da consegnare: 60 €')
+  await expect(seguire.locator('.stato.ok')).toHaveText(
+    'Ultima registrazione: P-2026-0007 del 30/10/2026, 6 giorni fa.',
+  )
+  // L'adempimento in ritardo in cima, in rosso e a parole, con chi lo segue; poi le prossime tre.
+  const scadenze = cardDopo(page, 'Prossime scadenze')
+  const prima = scadenze.locator('.riga').first()
+  await expect(prima).toContainText("Quota annuale all'ente di normazione")
+  await expect(prima.locator('.stato.bad')).toHaveText('In ritardo di 5 giorni')
+  await expect(prima).toContainText('Segue: il tesoriere')
+  await expect(scadenze.locator('.riga')).toHaveCount(5)
+  await expect(scadenze.locator('.riga').nth(1)).toContainText('Contare i messaggi senza risposta da più di 5 giorni')
+  await expect(scadenze.locator('.riga').nth(1).locator('.stato')).toHaveText('Fra 6 giorni')
+  await expect(scadenze.locator('summary')).toHaveText('Altre 1 nei prossimi 30 giorni')
+  await expect(scadenze).not.toContainText('Bando per i mercati contadini')
+  // T6: le due righe «da scrivere» del Foglio contenuti inventato.
+  await expect(page.getByText('Impegni da scrivere: 2', { exact: true })).toBeVisible()
+  // Part-time e tesoriere condividono l'account, e il tesoriere può confermare: «Oggi» lo dice.
+  await expect(sezione(page, 'Da controllare').first().locator('li')).toHaveText([
+    'La scadenza «Nomina per la piattaforma della newsletter» non ha nessuno che la segua.',
+    `L’account ${ACCOUNT.condiviso} ha due righe in «Accessi», e una può confermare: così si può confermare un proprio pagamento.`,
+  ])
+  await expect(sezione(page, 'Salute').first()).toHaveText('«Salute» è vuota: il motore non ha ancora fatto un giro.')
+  await expect(page.getByText('Nessun libro soci nel Drive finora', { exact: false })).toBeVisible()
+  await fatto(page)
+
+  // «Fatta» scrive la data nel Foglio contenuti, e la scadenza esce.
+  await prima.getByRole('button', { name: 'Fatta' }).click()
+  await expect(page.getByRole('status')).toHaveText(
+    "«Quota annuale all'ente di normazione» segnata fatta il 05/11/2026.",
+  )
+  expect(giorno(motore.scadenza('SCA-0001')?.['fatta il'])).toBe('2026-11-05')
+  await expect(cardDopo(page, 'Prossime scadenze').locator('.riga')).toHaveCount(4)
+  await expect(page.locator('.sezioni button').nth(2)).toHaveText('Oggi')
+
+  // «Salva nel Drive»: la copia di oggi, in sola lettura, senza mail né telefoni.
+  await tasto(page, 'Salva nel Drive').click()
+  await expect(page.getByRole('status')).toHaveText('Libro soci salvato nel Drive: «Libro soci al 2026-11-05».')
+  expect(motore.drive.map((file) => file.name)).toEqual(['Libro soci al 2026-11-05'])
+  expect(motore.drive[0]?.rows[0]).not.toContain('mail')
+  await expect(page.getByText('Ultimo libro soci nel Drive: 05/11/2026.')).toBeVisible()
+  await expect(page.getByRole('link', { name: "Apri l'ultimo" })).toHaveAttribute('href', /libro-1/)
+  await fatto(page)
+})
+
+test('la misura del mese: «Fatta» chiede il numero e lo scrive in «Misure», riga O9; non va in rosso', async ({
+  page,
+}) => {
+  const contenuti = demoSheets(ADESSO)
+  contenuti[SHEETS.deadlines.name]?.push([
+    'MIS-O9-2026-10',
+    'Conta i messaggi senza risposta da più di 5 giorni (mail e Instagram)',
+    'misura',
+    '2026-10-31',
+    'il segretario',
+    '',
+    '',
+    'no',
+  ])
+  const motore = motoreVero({ contenuti })
+  await apri(page, motore)
+  await page.locator('.sezioni button').nth(2).click()
+  const riga = cardDopo(page, 'Prossime scadenze').locator('.riga', { hasText: 'mail e Instagram' })
+  await expect(riga.locator('.stato')).toHaveText('Passata da 5 giorni')
+  await expect(riga.locator('.stato.bad')).toHaveCount(0)
+  await riga.getByRole('button', { name: 'Fatta' }).click()
+  await expect(titolo(page)).toHaveText('Conta i messaggi senza risposta da più di 5 giorni (mail e Instagram)')
+  await tasto(page, 'Segna fatta').click()
+  await expect(page.locator('#errore-misura')).toHaveText('Scrivi un numero intero, anche 0.')
+  await fatto(page)
+  await page.getByLabel('Quanti messaggi sono senza risposta da più di 5 giorni?').fill('3')
+  await tasto(page, 'Segna fatta').click()
+  await expect(page.getByRole('status')).toContainText('segnata fatta: 3 nella scheda «Misure».')
+  expect(giorno(motore.scadenza('MIS-O9-2026-10')?.['fatta il'])).toBe('2026-11-05')
+  const o9 = motore.misure().find((row) => String(row['obiettivo']).startsWith('O9'))
+  expect(o9?.['prima']).toBe(3)
+})
+
+test('un’ultima registrazione di più di 7 giorni fa va in rosso, a parole', async ({ page }) => {
+  const sheets = demoSociSheets()
+  const colonna = SOCI_SHEETS.payments.columns.indexOf('registrato il')
+  for (const riga of (sheets[SOCI_SHEETS.payments.name] ?? []).slice(1))
+    if (String(riga[colonna]) > '2026-10-20') riga[colonna] = '2026-10-20'
+  await apri(page, motoreVero({ sheets }))
+  await expect(page.locator('.sezioni button').nth(2)).toHaveText('Oggi · 2 da guardare')
+  await page.locator('.sezioni button').nth(2).click()
+  await expect(cardDopo(page, 'Pagamenti da seguire').locator('.stato.bad')).toHaveText(
+    "Nessuna registrazione da 16 giorni: l'ultima è P-2026-0015 del 20/10/2026.",
+  )
+  await fatto(page)
+})
+
+test('Pagamenti, dal tesoriere: da abbinare, «Conferma» che fa contare, «Ricevuti» che toglie dai contanti', async ({
+  page,
+}) => {
+  const motore = motoreVero({ email: ACCOUNT.condiviso })
+  await apri(page, motore, { persona: TESORIERE })
+  await page.locator('.sezioni button').nth(1).click()
+  await expect(titolo(page)).toHaveText('Pagamenti')
+  const daAbbinare = cardDopo(page, 'Da abbinare').locator('.riga')
+  await expect(daAbbinare).toHaveText([
+    /In banca il 02\/11\/2026: 30 €, «quota Verdi», rif\. TRN 90210\. Nessuna registrazione\./,
+    /P-2026-0015, 30 € del 25\/10\/2026: registrato senza socio, rif\. 60015\./,
+  ])
+  await expect(daAbbinare.first().getByRole('button')).toHaveText(['Registra questo bonifico', 'Non è una quota'])
+  await expect(daAbbinare.nth(1).getByRole('button')).toHaveText('Abbina a un socio')
+  const attesa = page.locator('h2:text-is("In attesa del tesoriere") + article')
+  await expect(attesa).toContainText('P-2026-0007')
+  await expect(attesa.locator('.stato').first()).toHaveText('In attesa del tesoriere')
+  await expect(attesa).toContainText('Giorgio Mancini · n. 10')
+  await expect(page.getByText('2 pagamenti in contanti da consegnare: 60 €')).toBeVisible()
+  await expect(page.getByText('4 righe in «Estratto conto», 3 abbinate. Ultima riga: 02/11/2026.')).toBeVisible()
+  await fatto(page)
+
+  await attesa.getByRole('button', { name: 'Conferma' }).click()
+  await expect(page.getByRole('status')).toHaveText(
+    'Pagamento P-2026-0007 di Giorgio Mancini confermato: conta da adesso.',
+  )
+  await expect(page.getByText('Nessun pagamento in attesa del tesoriere.')).toBeVisible()
+  expect(motore.pagamento('P-2026-0007')?.stato).toBe('registrato')
+  expect(motore.mails.map((mail) => mail.to)).toEqual(['giorgio.mancini@example.org'])
+
+  const contanti = page.locator('h2:text-is("Contanti da consegnare") ~ article', { hasText: 'P-2026-0003' })
+  await contanti.getByRole('button', { name: 'Ricevuti' }).click()
+  await expect(page.getByRole('status')).toHaveText('Contanti di P-2026-0003 di Luca Fabbri ricevuti.')
+  await expect(page.getByText('1 pagamento in contanti da consegnare: 30 €')).toBeVisible()
+  expect(giorno(motore.pagamento('P-2026-0003')?.['contanti ricevuti il'])).toBe('2026-11-05')
+  await page.locator('.sezioni button').first().click()
+  await socio(page, 'Giorgio Mancini').click()
+  await expect(page.locator('main > p.stato').first()).toHaveText('In regola')
+  await expect(page.locator('article', { hasText: 'P-2026-0007' }).locator('.stato')).toHaveText([
+    'Contanti da consegnare',
+  ])
+})
+
+test('chi non ha il permesso non vede «Conferma» né «Ricevuti»; su un pagamento registrato da sé «Conferma» no, «Ricevuti» sì', async ({
+  page,
+  context,
+}) => {
+  await apri(page, motoreVero())
+  await page.locator('.sezioni button').nth(1).click()
+  await expect(page.getByRole('button', { name: 'Conferma' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Ricevuti' })).toHaveCount(0)
+  await page.locator('.sezioni button').first().click()
+  await socio(page, 'Luca Fabbri').click()
+  await expect(page.getByRole('button', { name: 'Ricevuti' })).toHaveCount(0)
+
+  // La part-time col permesso di confermare: il suo P-2026-0007 non ha «Conferma», ma ha «Ricevuti».
+  const sheets = demoSociSheets()
+  sheets[SOCI_SHEETS.access.name]?.splice(2, 1, [
+    PART_TIME,
+    ACCOUNT.condiviso,
+    'segreteria part-time',
+    'sì',
+    'no',
+    'sì',
+  ])
+  const altra = await context.newPage()
+  await apri(altra, motoreVero({ email: ACCOUNT.condiviso, sheets }), { persona: PART_TIME })
+  await altra.locator('.sezioni button').nth(1).click()
+  const attesa = altra.locator('h2:text-is("In attesa del tesoriere") + article')
+  await expect(attesa).toContainText('P-2026-0007')
+  await expect(attesa.getByRole('button', { name: 'Conferma' })).toHaveCount(0)
+  await expect(attesa.getByRole('button', { name: 'Ricevuti' })).toHaveCount(1)
+  const contanti = altra.locator('h2:text-is("Contanti da consegnare") ~ article')
+  await expect(contanti.getByRole('button', { name: 'Ricevuti' })).toHaveCount(2)
+  await fatto(altra)
+})
+
+test('«Abbina a un socio» un pagamento senza socio, e «Registra questo bonifico» con i campi già scritti', async ({
+  page,
+}) => {
+  const motore = motoreVero()
+  await apri(page, motore)
+  await page.locator('.sezioni button').nth(1).click()
+  await tasto(page, 'Abbina a un socio').click()
+  await expect(titolo(page)).toHaveText('Abbina a un socio')
+  await page.getByLabel('Socio', { exact: true }).fill('donati')
+  await tasto(page, 'Paolo Donati · numero 4').click()
+  await expect(page.getByRole('status')).toHaveText('P-2026-0015 abbinato a Paolo Donati. Ho mandato la ricevuta.')
+  expect(String(motore.pagamento('P-2026-0015')?.['numero socio'])).toBe('4')
+  await expect(cardDopo(page, 'Da abbinare').locator('.riga')).toHaveCount(1)
+  await tasto(page, 'Registra questo bonifico').click()
+  await expect(titolo(page)).toHaveText('Registra un pagamento')
+  await expect(page.getByLabel('Importo')).toHaveValue('30')
+  await expect(page.getByLabel('Data', { exact: true })).toHaveValue('2026-11-02')
+  await expect(page.getByLabel('Riferimento del bonifico')).toHaveValue('TRN 90210')
+  await fatto(page)
+})
+
+test('l’estratto conto incollato: le righe nuove si abbinano, quelle già incollate si scartano', async ({ page }) => {
+  const motore = motoreVero()
+  await apri(page, motore)
+  await page.locator('.sezioni button').nth(1).click()
+  const righe = ['2026-11-02\t30\tquota Verdi\tTRN 90210', '2026-11-03\t30\tQuota RAMI 2026 socio n. 2\tTRN 7001'].join(
+    '\n',
+  )
+  await page.getByLabel('Oppure incolla le righe').fill(righe)
+  await tasto(page, 'Importa').click()
+  await expect(page.getByRole('status')).toHaveText(
+    'Estratto conto importato: 1 riga nuova, 1 già incollata, scartata.',
+  )
+  expect(motore.banca()).toHaveLength(5)
+  expect(motore.pagamenti()).toHaveLength(PAGAMENTI)
+  await expect(cardDopo(page, 'Da abbinare').locator('.riga')).toHaveCount(3)
+  await page.getByLabel('Oppure incolla le righe').fill(righe)
+  await tasto(page, 'Importa').click()
+  await expect(page.getByRole('status')).toHaveText(
+    'Estratto conto importato: 0 righe nuove, 2 già incollate, scartate.',
+  )
+  expect(motore.banca()).toHaveLength(5)
+  expect(motore.pagamenti()).toHaveLength(PAGAMENTI)
+})
+
+test('«Non è una quota»: il motivo è obbligatorio, poi la riga esce da «Da abbinare» e si conta a parte; reincollata, il motivo resta', async ({
+  page,
+}) => {
+  const motore = motoreVero()
+  await apri(page, motore)
+  await page.locator('.sezioni button').nth(1).click()
+  const righe = [
+    '2026-11-03\t45\traduno rete microfarm 2027 (solo soci)\tCRO 70101',
+    '2026-11-04\t15\tmagliette\tCRO 70102',
+  ].join('\n')
+  await page.getByLabel('Oppure incolla le righe').fill(righe)
+  await tasto(page, 'Importa').click()
+  await expect(page.getByRole('status')).toHaveText('Estratto conto importato: 2 righe nuove, 1 ignorata.')
+  await expect(page.locator('summary', { hasText: 'Iscrizioni al Raduno: 1' })).toBeVisible()
+  await expect(cardDopo(page, 'Da abbinare').locator('.riga')).toHaveCount(3)
+
+  // I tasti di ogni riga hanno come descrizione il testo della riga: chi non la vede sa di quale si parla.
+  const magliette = cardDopo(page, 'Da abbinare').locator('.riga', { hasText: 'magliette' })
+  const nonQuota = magliette.getByRole('button', { name: 'Non è una quota' })
+  await expect(nonQuota).toHaveAccessibleDescription(/In banca il 04\/11\/2026: 15 €, «magliette»/)
+  await nonQuota.click()
+  await expect(titolo(page)).toHaveText('Non è una quota?')
+  await expect(titolo(page)).toBeFocused()
+  const motivo = page.getByLabel('Motivo (obbligatorio)')
+  await expect(motivo).not.toHaveAttribute('maxlength')
+  await expect(motivo).toHaveAccessibleDescription(/al massimo 100 segni/)
+  await tasto(page, 'Sì, non è una quota').click()
+  await expect(page.locator('#errore-motivo')).toHaveText('Scrivi il motivo, per esempio «donazione» o «magliette».')
+  await expect(motivo).toHaveAttribute('aria-invalid', 'true')
+  await expect(motivo).toBeFocused()
+  await fatto(page)
+  await motivo.fill('magliette del banchetto')
+  await tasto(page, 'Sì, non è una quota').click()
+  await expect(page.getByRole('status')).toHaveText(
+    'La riga del 04/11/2026 da 15 € ora è fra quelle che non sono quote: «magliette del banchetto».',
+  )
+  await expect(page.locator('summary', { hasText: 'Non sono quote: 1' })).toBeVisible()
+  await page.locator('summary', { hasText: 'Non sono quote: 1' }).click()
+  // La riga del Foglio, con l'intestazione nella riga 1: la cella da svuotare se il motivo è sbagliato.
+  const rigaFoglio = motore.banca().length + 1
+  await expect(
+    page.getByText(
+      `In banca il 04/11/2026: 15 €, «magliette», rif. CRO 70102. Motivo: magliette del banchetto (riga ${rigaFoglio}).`,
+    ),
+  ).toBeVisible()
+  await expect(cardDopo(page, 'Da abbinare').locator('.riga')).toHaveCount(2)
+  expect(motore.banca().at(-1)?.['ignorato perché']).toBe('magliette del banchetto')
+  await fatto(page)
+
+  await page.getByLabel('Oppure incolla le righe').fill(righe)
+  await tasto(page, 'Importa').click()
+  await expect(page.getByRole('status')).toHaveText(
+    'Estratto conto importato: 0 righe nuove, 2 già incollate, scartate.',
+  )
+  expect(motore.banca().at(-1)?.['ignorato perché']).toBe('magliette del banchetto')
+  await expect(page.locator('summary', { hasText: 'Non sono quote: 1' })).toBeVisible()
+  expect(motore.pagamenti()).toHaveLength(PAGAMENTI)
+})
+
+test('con molte iscrizioni al Raduno il modulo dell’estratto conto viene prima, e gli elenchi sono chiusi', async ({
+  page,
+}) => {
+  const motore = motoreVero()
+  await apri(page, motore)
+  await page.locator('.sezioni button').nth(1).click()
+  const righe = Array.from(
+    { length: 40 },
+    (_, i) => `2026-11-03\t45\traduno rete microfarm 2027 (solo soci)\tCRO ${80100 + i}`,
+  ).join('\n')
+  await page.getByLabel('Oppure incolla le righe').fill(righe)
+  await tasto(page, 'Importa').click()
+  await expect(page.getByRole('status')).toHaveText('Estratto conto importato: 40 righe nuove, 40 ignorate.')
+  await expect(page.getByText(/40 iscrizioni al Raduno\. Ultima riga: 03\/11\/2026\.$/)).toBeVisible()
+  const elenco = page.locator('details', { hasText: 'Iscrizioni al Raduno: 40' })
+  await expect(elenco).not.toHaveAttribute('open')
+  await expect(elenco.getByText(/^Chi si iscrive al Raduno paga con un bonifico a parte/)).toBeHidden()
+  // Il campo per incollare sta sopra l'elenco, non quattro schermate più in basso.
+  const campo = await page.locator('#banca').boundingBox()
+  const sommario = await elenco.locator('summary').boundingBox()
+  expect(campo && sommario && campo.y < sommario.y).toBe(true)
+  await elenco.locator('summary').click()
+  // La nota dice anche come si recupera una quota messa qui per errore: col riferimento o con la causale.
+  await expect(elenco.getByText(/^Chi si iscrive al Raduno paga con un bonifico a parte/)).toBeVisible()
+  await expect(elenco.getByText(/^Chi si iscrive al Raduno/)).toContainText(
+    '«Registra un pagamento» e lo stesso riferimento',
+  )
+  await expect(elenco.getByText(/^Chi si iscrive al Raduno/)).toContainText('correggi la causale')
+  await expect(elenco.locator('.riga')).toHaveCount(40)
+  await fatto(page)
+})
+
+test('le pagine vuote lo dicono: niente da abbinare, niente da controllare, nessuno in attesa', async ({ page }) => {
+  const sheets = demoSociSheets()
+  // Via le righe della banca di «quota Rossi» e «quota Verdi» e il pagamento senza socio; l'attesa confermata.
+  sheets[SOCI_SHEETS.bank.name]?.splice(3, 2)
+  const pagamenti = sheets[SOCI_SHEETS.payments.name] ?? []
+  pagamenti.splice(
+    pagamenti.findIndex((riga) => riga[0] === 'P-2026-0015'),
+    1,
+  )
+  const stato = SOCI_SHEETS.payments.columns.indexOf('stato')
+  for (const riga of pagamenti.slice(1)) if (riga[0] === 'P-2026-0007') riga[stato] = 'registrato'
+  // Il tesoriere sul suo account: con quello condiviso «Da controllare» lo direbbe.
+  for (const riga of (sheets[SOCI_SHEETS.access.name] ?? []).slice(1))
+    if (riga[0] === DEMO_OFFICE.treasurer) riga[1] = 'tesoriere@example.org'
+  const contenuti = demoSheets(ADESSO)
+  const chiSegue = SHEETS.deadlines.columns.indexOf('chi segue (ruolo)')
+  for (const riga of (contenuti[SHEETS.deadlines.name] ?? []).slice(1))
+    if (riga[0] === 'SCA-0003') riga[chiSegue] = 'il segretario'
+  await apri(page, motoreVero({ sheets, contenuti }))
+  await page.locator('.sezioni button').nth(1).click()
+  await expect(page.getByText('Niente da abbinare: banca e registro tornano.')).toBeVisible()
+  await expect(page.getByText('Nessun pagamento in attesa del tesoriere.')).toBeVisible()
+  await fatto(page)
+  await page.locator('.sezioni button').nth(2).click()
+  await expect(sezione(page, 'Da controllare').first()).toHaveText('Niente da controllare.')
+})
+
+test('con KV irraggiungibile la registrazione resta, e «Oggi» lo dice finché non riesce', async ({ page }) => {
+  const motore = motoreVero({ kvGiu: true })
+  await apri(page, motore)
+  await compila(page, { cerca: 'bellini', scegli: 'Marco Bellini · numero 2' }, { riferimento: '8842' })
+  await tasto(page, 'Registra e manda la mail').click()
+  await expect(page.getByText('Registrato. Marco Bellini è in regola per il 2026.')).toBeVisible()
+  expect(motore.pagamenti()).toHaveLength(PAGAMENTI + 1)
+  await tasto(page, 'Torna ai soci').click()
+  await page.locator('.sezioni button').nth(2).click()
+  await expect(page.locator('main > .stato.bad')).toHaveText(
+    /^I numeri dei soci non arrivano alla Riservata dal 05\/11\/2026: riprovo a ogni giro\. KV ha risposto 503/,
+  )
+  motore.kv.down = false
+  await page.locator('.sezioni button').first().click()
+  await socio(page, 'Marco Bellini').click()
+  await page.locator('article', { hasText: 'P-2026-0016' }).getByRole('button', { name: "Cambia l'anno" }).click()
+  await page.getByLabel("Vale per l'anno").selectOption('2027')
+  await page.getByLabel('Motivo (obbligatorio)').fill('quota dell’anno dopo')
+  await tasto(page, "Cambia l'anno").click()
+  await expect(page.getByText('Ora il pagamento P-2026-0016 vale per il 2027.')).toBeVisible()
+  await tasto(page, '‹ Indietro').click()
+  await page.locator('.sezioni button').nth(2).click()
+  await expect(titolo(page)).toHaveText('Oggi')
+  await expect(page.locator('main > .stato.bad')).toHaveCount(0)
+})
+
+test('la copia mensile del libro soci non riuscita si legge in «Oggi»', async ({ page }) => {
+  const libro = {
+    savedOn: '2026-10-01',
+    url: 'https://docs.google.com/spreadsheets/d/x/edit',
+    failedOn: '2026-11-01',
+    error: 'Drive non risponde',
+  }
+  await apri(page, motoreVero({ libro, driveGiu: true }))
+  await page.locator('.sezioni button').nth(2).click()
+  await expect(page.getByText('Ultimo libro soci nel Drive: 01/10/2026.')).toBeVisible()
+  await expect(page.locator('main > .stato.bad')).toHaveText(
+    'La copia del 01/11/2026 non è riuscita: Drive non risponde. Riprova con «Salva nel Drive»; se non va, avvisa chi cura la Bussola.',
+  )
+  await tasto(page, 'Salva nel Drive').click()
+  await expect(page.locator('#errore-generale')).toHaveText('Il libro soci non è stato salvato: Drive non risponde')
+  await fatto(page)
 })
 
 test('l’errore del servizio: all’apertura «Riprova»; alla registrazione la stessa chiave non duplica', async ({

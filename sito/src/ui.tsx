@@ -1,6 +1,23 @@
 // I pezzi comuni delle pagine. Ogni stato ha parola, forma e colore insieme, mai il solo colore
 // (docs/design/sistema.md, «Come si scrive uno stato»): la forma è decorativa, la parola dice tutto.
-import { STAGE_LABELS, stageStep, WORK_STEPS, type CalendarDate, type WorkStage } from '@bussola/condiviso'
+import {
+  STAGE_LABELS,
+  stageStep,
+  WORK_STEPS,
+  type CalendarDate,
+  type DeadlineKind,
+  type LocalDateTime,
+  type WorkStage,
+} from '@bussola/condiviso'
+
+export const KIND_LABELS: Record<DeadlineKind, string> = {
+  call: 'Bando',
+  duty: 'Adempimento',
+  tax: 'Fiscale',
+  event: 'Evento',
+  assembly: 'Assemblea',
+  measure: 'Misura',
+}
 
 const days = (count: number) => (count === 1 ? '1 giorno' : `${count} giorni`)
 
@@ -37,6 +54,32 @@ const euroCents = euro(2)
 export function formatEuro(amount: number): string {
   const rounded = Math.round(amount * 100) / 100
   return (Number.isInteger(rounded) ? euroWhole : euroCents).format(rounded)
+}
+
+/** Un importo che il tesoriere non ha scritto è «—», non zero. */
+export const money = (amount: number | null) => (amount === null ? '—' : formatEuro(amount))
+
+/**
+ * La percentuale dello speso sul previsto, arrotondata; non c'è se manca un importo o il previsto è zero. Lo spazio
+ * prima non va a capo: la percentuale non resta sola su una riga.
+ */
+const spentShare = (planned: number | null, spent: number | null) =>
+  planned === null || spent === null || planned === 0 ? '' : `\u00a0(${Math.round((spent / planned) * 100)}%)`
+
+/**
+ * «5.000 € · speso 1.200 € (24%)»: dopo «Previsto» nelle righe del budget e nella scheda di un impegno, dopo
+ * «previsto» nel totale.
+ */
+export const plannedAndSpent = ({ planned, spent }: { planned: number | null; spent: number | null }) =>
+  `${money(planned)} · speso ${money(spent)}${spentShare(planned, spent)}`
+
+const meetingDay = new Intl.DateTimeFormat('it-IT', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
+
+/** «giovedì 5 novembre alle 18:30», con l'anno solo se non è quello di oggi: un'ora di Roma, senza fusi. */
+export function formatMeeting(startsAt: LocalDateTime, today: CalendarDate): string {
+  const day = meetingDay.format(new Date(`${startsAt.slice(0, 10)}T00:00:00Z`))
+  const year = startsAt.slice(0, 4) === today.slice(0, 4) ? '' : ` ${startsAt.slice(0, 4)}`
+  return `${day}${year} alle ${startsAt.slice(11, 16)}`
 }
 
 const instantDay = new Intl.DateTimeFormat('it-IT', {
@@ -98,5 +141,32 @@ export function Signal({
       <span class={mark} aria-hidden="true"></span>
       {children}
     </p>
+  )
+}
+
+/**
+ * Il prossimo incontro: quando, di che gruppo e «Entra su Meet». `internal`: non è visibile ai soci, lo vede il
+ * rappresentante del gruppo.
+ */
+export function MeetingCard(props: {
+  meeting: { startsAt: LocalDateTime; meetUrl: string }
+  groupName?: string
+  internal?: boolean
+  today: CalendarDate
+}) {
+  const when = formatMeeting(props.meeting.startsAt, props.today)
+  return (
+    <>
+      <p class="quando">{when}</p>
+      {props.groupName && <p class="small">{props.groupName}</p>}
+      {props.internal && <p class="small">Solo per chi partecipa al gruppo: i soci non lo vedono.</p>}
+      <a class="btn" href={props.meeting.meetUrl}>
+        Entra su Meet
+        <span class="vh">
+          : {props.groupName ? `${props.groupName}, ` : ''}
+          {when}
+        </span>
+      </a>
+    </>
   )
 }

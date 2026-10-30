@@ -1,17 +1,25 @@
-import { romeDate } from '@bussola/condiviso'
+import { romeDate, romeDateTime } from '@bussola/condiviso'
 import { describe, expect, it } from 'vitest'
 import {
   ContentError,
   readAmount,
   readBudget,
   readDeadlines,
+  readFirstDay,
+  readGroups,
   readIssues,
+  readLinks,
+  readLocalDateTime,
+  readMeetings,
+  readOptionalTable,
   readPeople,
   readProjects,
+  readReferents,
   readResolutions,
   readRole,
   readSettings,
   readTable,
+  readYesNo,
   SHEETS,
   text,
   type SheetSpec,
@@ -212,6 +220,13 @@ describe('SHEETS', () => {
       'Budget',
       'Persone della Riservata',
       'Misure',
+      'Referenti',
+      'Incontri',
+      'Link',
+      'Primo giorno',
+      'Impegni',
+      'Proposte di impegno',
+      'Uso',
       'Impostazioni',
       'Salute',
     ])
@@ -312,6 +327,7 @@ describe('readDeadlines', () => {
         dueOn: '2026-11-20',
         ownerRole: 'il tesoriere',
         doneOn: '2026-11-19',
+        membersCanSee: false,
       },
     ])
     expect(warnings).toEqual([])
@@ -563,5 +579,284 @@ describe('readBudget', () => {
       '«Budget», riga 2: la cifra «cinquecento» in «previsto» non la leggo: esce vuota.',
       '«Budget», riga 2: la data «ieri» in «aggiornato il» non la leggo.',
     ])
+  })
+})
+
+describe('le schede del sito (T7)', () => {
+  const groups = [
+    { id: 'GDL-orti', name: 'Orti e Suoli' },
+    { id: 'GDL-semi', name: 'Semi e Biodiversità' },
+  ]
+  const table = (spec: SheetSpec, rows: Record<string, unknown>[]) =>
+    readTable(
+      memoryWorkbook({ [spec.name]: [[...spec.columns], ...rows.map((row) => spec.columns.map((c) => row[c] ?? ''))] }),
+      spec,
+    )
+
+  it('una scheda che manca non ferma il giro: lo dice l’avviso', () => {
+    const warnings: string[] = []
+    expect(readOptionalTable(memoryWorkbook({}), SHEETS.referents, warnings)).toBeNull()
+    expect(warnings).toEqual(['Manca la scheda «Referenti»: la crea setupBussola, dall’editor.'])
+  })
+
+  it('nemmeno una colonna che manca: la scheda non si legge, e l’avviso dice quale', () => {
+    const warnings: string[] = []
+    const workbook = memoryWorkbook({ Referenti: [['GdL', 'nome da mostrare', 'ruolo']] })
+    expect(readOptionalTable(workbook, SHEETS.referents, warnings)).toBeNull()
+    expect(warnings).toEqual([
+      '«Referenti»: manca la colonna «consenso dal». Finché non c’è, ciò che porta la scheda non esce sul sito.',
+    ])
+  })
+
+  it('sì e no come si scrivono nel Foglio', () => {
+    expect(['Sì', 'si', true, 'VERO'].map(readYesNo)).toEqual([true, true, true, true])
+    expect(['No', '', false, null].map(readYesNo)).toEqual([false, false, false, false])
+    expect(readYesNo('forse')).toBeUndefined()
+  })
+
+  it('i GdL: missione, come si partecipa, dove e quando; la chat solo se aperta ai soci', () => {
+    const warnings: string[] = []
+    const read = readGroups(
+      table(SHEETS.groups, [
+        {
+          id: 'GDL-orti',
+          nome: 'Orti',
+          missione: 'Orti vivi.',
+          'link della chat': 'https://chat.example.org/o',
+          'chat aperta ai soci': 'sì',
+        },
+        { id: 'GDL-semi', nome: 'Semi', 'link della chat': 'https://chat.example.org/s', 'chat aperta ai soci': 'no' },
+        { id: 'GDL-x', nome: 'X', 'link della chat': 'https://wa.me/393331234567', 'chat aperta ai soci': 'sì' },
+      ]),
+      warnings,
+    )
+    expect(read.map((group) => group.chatUrl)).toEqual(['https://chat.example.org/o', null, null])
+    expect(read[0]?.mission).toBe('Orti vivi.')
+    expect(warnings).toEqual(['«GdL», riga 4: il «link della chat» non è un link https che si apre: non esce.'])
+  })
+
+  it('una scheda «GdL» senza «chat aperta ai soci» tiene chiuse le chat, e lo dice', () => {
+    const warnings: string[] = []
+    const workbook = memoryWorkbook({
+      GdL: [
+        ['id', 'nome', 'link della chat', 'codice del gruppo'],
+        ['GDL-orti', 'Orti', 'https://chat.example.org/o', 'k1'],
+      ],
+    })
+    expect(readGroups(readTable(workbook, SHEETS.groups), warnings)[0]?.chatUrl).toBeNull()
+    expect(warnings[0]).toContain('manca la colonna «chat aperta ai soci»')
+  })
+
+  describe('readReferents', () => {
+    const read = (rows: Record<string, unknown>[], warnings: string[] = []) =>
+      readReferents(table(SHEETS.referents, rows), romeDate, warnings, groups)
+
+    it('legge GdL (id o nome), nome, ruolo e consenso; la mail per la Riservata no', () => {
+      const referents = read([
+        {
+          GdL: 'Orti e Suoli',
+          'numero socio': 34,
+          'nome da mostrare': 'Lia Prova',
+          ruolo: 'referente',
+          'consenso dal': '2026-10-01',
+          'mail per la Riservata': 'lia.prova@example.org',
+        },
+        { GdL: 'GDL-semi', 'nome da mostrare': 'Teo Finto', ruolo: 'co-referente', 'consenso dal': '' },
+      ])
+      expect(referents).toEqual([
+        { groupId: 'GDL-orti', name: 'Lia Prova', role: 'referente', consentSince: '2026-10-01' },
+        { groupId: 'GDL-semi', name: 'Teo Finto', role: 'co-referente', consentSince: null },
+      ])
+      expect(JSON.stringify(referents)).not.toContain('example.org')
+    })
+
+    it('un ruolo che porta un nome esce come «referente», con l’avviso', () => {
+      const warnings: string[] = []
+      const [referent] = read(
+        [{ GdL: 'GDL-orti', 'nome da mostrare': 'Lia', ruolo: 'referente Lia Prova', 'consenso dal': '' }],
+        warnings,
+      )
+      expect(referent?.role).toBe('referente')
+      expect(warnings[0]).toContain('«Lia» sembra un nome')
+    })
+
+    it('un nome al primo posto del ruolo non esce: il ruolo comincia con la parola del ruolo', () => {
+      const warnings: string[] = []
+      const roles = ['Lia referente', 'Mario', 'Bruno, co-referente'].map((ruolo) => ({
+        GdL: 'GDL-orti',
+        'nome da mostrare': 'X',
+        ruolo,
+        'consenso dal': '',
+      }))
+      expect(read(roles, warnings).map((referent) => referent.role)).toEqual(['referente', 'referente', 'referente'])
+      expect(warnings).toHaveLength(3)
+      expect(warnings[0]).toContain('«Lia» non è la parola di un ruolo')
+    })
+
+    it('i ruoli come si scrivono passano, anche con la maiuscola o l’articolo', () => {
+      const warnings: string[] = []
+      const roles = ['Referente', 'co-referente', 'rappresentante nel Coordinamento', 'la referente', 'Portavoce']
+      const referents = read(
+        roles.map((ruolo) => ({ GdL: 'GDL-orti', 'nome da mostrare': 'X', ruolo, 'consenso dal': '' })),
+        warnings,
+      )
+      expect(referents.map((referent) => referent.role)).toEqual(roles)
+      expect(warnings).toEqual([])
+    })
+
+    it('un GdL che non c’è, o un consenso che non si legge, si dicono', () => {
+      const warnings: string[] = []
+      const referents = read(
+        [
+          { GdL: 'Gruppo inventato', 'nome da mostrare': 'A', ruolo: 'referente', 'consenso dal': '2026-10-01' },
+          { GdL: 'GDL-orti', 'nome da mostrare': 'B', ruolo: 'referente', 'consenso dal': 'ieri' },
+        ],
+        warnings,
+      )
+      expect(referents).toEqual([{ groupId: 'GDL-orti', name: 'B', role: 'referente', consentSince: null }])
+      expect(warnings).toHaveLength(2)
+      expect(warnings[1]).toContain('il nome non esce')
+    })
+  })
+
+  describe('readMeetings', () => {
+    const read = (rows: Record<string, unknown>[], warnings: string[] = []) =>
+      readMeetings(table(SHEETS.meetings, rows), romeDateTime, warnings, groups, 'da controllare')
+    const meet = 'https://meet.google.com/abc-defg-hij'
+
+    it('legge giorno e ora scritti a mano o come li dà Google, all’ora di Roma', () => {
+      expect(
+        read([
+          { GdL: 'GDL-orti', 'data e ora': '05/11/2026 18:30', 'link Meet': meet, 'visibile ai soci': 'sì' },
+          {
+            GdL: 'Coordinamento',
+            'data e ora': new Date('2026-11-06T19:00:00Z'),
+            'link Meet': meet,
+            'visibile ai soci': 'no',
+          },
+          { GdL: 'Semi e Biodiversità', 'data e ora': '2026-11-07 9:00', 'link Meet': meet },
+        ]),
+      ).toEqual([
+        { groupId: 'GDL-orti', startsAt: '2026-11-05T18:30', meetUrl: meet, membersCanSee: true },
+        { groupId: 'Coordinamento', startsAt: '2026-11-06T20:00', meetUrl: meet, membersCanSee: false },
+        { groupId: 'GDL-semi', startsAt: '2026-11-07T09:00', meetUrl: meet, membersCanSee: false },
+      ])
+    })
+
+    it('una data senza ora, che il Foglio scrive a mezzanotte, non esce: manca l’ora', () => {
+      const warnings: string[] = []
+      // «05/11/2026» scritto a mano: il Foglio ne fa la mezzanotte di Roma.
+      const midnight = new Date('2026-11-04T23:00:00Z')
+      expect(
+        read([{ GdL: 'GDL-orti', 'data e ora': midnight, 'link Meet': meet, 'visibile ai soci': 'sì' }], warnings),
+      ).toEqual([])
+      expect(warnings[0]).toContain('manca l’ora')
+      expect(readLocalDateTime(midnight, romeDateTime)).toBeUndefined()
+    })
+
+    it('senza Meet, con la data sbagliata o «da controllare» non esce', () => {
+      const warnings: string[] = []
+      const meetings = read(
+        [
+          { GdL: 'GDL-orti', 'data e ora': '05/11/2026 18:30', 'link Meet': 'https://zoom.us/j/1' },
+          { GdL: 'GDL-orti', 'data e ora': 'giovedì', 'link Meet': meet },
+          {
+            GdL: 'GDL-orti',
+            'data e ora': '05/11/2026 18:30',
+            'link Meet': meet,
+            'esito del controllo': 'da controllare: codice',
+          },
+        ],
+        warnings,
+      )
+      expect(meetings).toEqual([])
+      expect(warnings).toHaveLength(2)
+    })
+
+    it('lo scritto a mano', () => {
+      expect(readLocalDateTime('2026-11-05T18:30', romeDateTime)).toBe('2026-11-05T18:30')
+      expect(readLocalDateTime('5/11/2026 18.30', romeDateTime)).toBe('2026-11-05T18:30')
+      expect(readLocalDateTime('', romeDateTime)).toBeNull()
+      expect(readLocalDateTime('31/02/2026 18:30', romeDateTime)).toBeUndefined()
+    })
+  })
+
+  describe('readLinks', () => {
+    it('ognuno con chi lo può aprire; il GdL solo per i partecipanti di un GdL', () => {
+      const warnings: string[] = []
+      const links = readLinks(
+        table(SHEETS.links, [
+          { titolo: 'Calendario', link: 'https://calendar.example.org', 'chi lo può aprire': 'tutti', GdL: 'GDL-orti' },
+          {
+            titolo: 'Cartella',
+            link: 'https://drive.google.com/x',
+            'chi lo può aprire': 'partecipanti del GdL',
+            GdL: 'Orti e Suoli',
+          },
+          { titolo: 'Verbali', link: 'https://drive.google.com/y', 'chi lo può aprire': 'Coordinamento' },
+          { titolo: 'Telefono', link: 'https://wa.me/393331234567', 'chi lo può aprire': 'soci' },
+          { titolo: 'Senza gruppo', link: 'https://drive.google.com/z', 'chi lo può aprire': 'GdL' },
+          { titolo: 'Boh', link: 'https://drive.google.com/z', 'chi lo può aprire': 'amici' },
+        ]),
+        warnings,
+        groups,
+      )
+      expect(links).toEqual([
+        { title: 'Calendario', url: 'https://calendar.example.org', audience: 'all', groupId: null },
+        { title: 'Cartella', url: 'https://drive.google.com/x', audience: 'group', groupId: 'GDL-orti' },
+        { title: 'Verbali', url: 'https://drive.google.com/y', audience: 'coordination', groupId: null },
+      ])
+      expect(warnings).toHaveLength(3)
+    })
+  })
+
+  it('il primo giorno: i passi nell’ordine delle righe', () => {
+    const warnings: string[] = []
+    expect(
+      readFirstDay(
+        table(SHEETS.firstDay, [
+          { titolo: 'Scegli un gruppo', testo: 'Guarda i Gruppi.' },
+          { titolo: 'Scrivi', testo: 'Al referente.', link: 'mailto:x@example.org' },
+          { testo: 'senza titolo' },
+        ]),
+        warnings,
+      ),
+    ).toEqual([
+      { title: 'Scegli un gruppo', text: 'Guarda i Gruppi.', url: null },
+      { title: 'Scrivi', text: 'Al referente.', url: null },
+    ])
+    expect(warnings).toHaveLength(2)
+  })
+
+  it('le scadenze dicono se sono visibili ai soci; vuoto vale no', () => {
+    const deadlines = readDeadlines(readTable(memoryWorkbook(demoSheets(now)), SHEETS.deadlines), romeDate, [])
+    expect(deadlines.filter((deadline) => deadline.membersCanSee).map((deadline) => deadline.id)).toEqual([
+      'SCA-0002',
+      'SCA-0005',
+      'SCA-0009',
+      'SCA-0010',
+    ])
+  })
+
+  it('il link della segreteria in «Impostazioni»: una mail non va', () => {
+    const settings = (value: string, warnings: string[] = []) =>
+      readSettings(
+        readTable(
+          memoryWorkbook({
+            Impostazioni: [
+              ['voce', 'valore'],
+              ['link della segreteria', value],
+            ],
+          }),
+          SHEETS.settings,
+        ),
+        warnings,
+      ).officeUrl
+    expect(settings('https://docs.google.com/forms/d/e/x/viewform')).toBe(
+      'https://docs.google.com/forms/d/e/x/viewform',
+    )
+    const warnings: string[] = []
+    expect(settings('mailto:segreteria@example.org', warnings)).toBeNull()
+    expect(warnings).toHaveLength(1)
   })
 })

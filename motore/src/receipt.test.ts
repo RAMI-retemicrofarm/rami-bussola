@@ -21,6 +21,7 @@ describe('receiptMail', () => {
     expect(receiptMail(transfer)).toEqual({
       to: 'rossana@example.org',
       name: 'Segreteria RAMI',
+      replyTo: 'segreteria@retemicrofarm.it',
       subject: 'Quota ricevuta, sei in regola',
       body:
         'Ciao Rossana,\n\nabbiamo ricevuto la tua quota di 30 € per il 2027: bonifico del 16/10/2026, rif. 8841.\n' +

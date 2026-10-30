@@ -62,6 +62,11 @@ function openFor(workbook: Workbook) {
     withLock: (run) => run(),
     sendMail: () => undefined,
     state: memoryState(),
+    content: null,
+    kv: null,
+    scope: '',
+    sha256Hex: (text) => text,
+    registerStore: null,
   }
   const opened = openOffice(deps, '')
   if (opened.kind !== 'ok') throw new Error(`la pagina non si apre: ${JSON.stringify(opened)}`)
@@ -147,6 +152,11 @@ describe('la migrazione del libro soci, nel Foglio soci', () => {
       withLock: (run) => run(),
       sendMail: () => undefined,
       state: memoryState(),
+      content: null,
+      kv: null,
+      scope: '',
+      sha256Hex: (text) => text,
+      registerStore: null,
     }
     const opened = openOffice(deps, '')
     if (opened.kind !== 'ok') throw new Error(`la pagina non si apre: ${JSON.stringify(opened)}`)

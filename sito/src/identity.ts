@@ -2,11 +2,17 @@
 // dell'istantanea riservata, con ruoli e GdL. La mail non esce dalla Function.
 import {
   bytesToHex,
+  MEMBERS_KEY,
   normalizeEmail,
+  parseMembersSnapshot,
   parseReservedSnapshot,
+  parseSiteSnapshot,
   RESERVED_KEY,
+  SITE_KEY,
+  type MembersSnapshot,
   type ReservedPerson,
   type ReservedSnapshot,
+  type SiteSnapshot,
 } from '@bussola/condiviso'
 
 export async function sha256Hex(text: string): Promise<string> {
@@ -19,16 +25,34 @@ export async function findPerson(email: string, snapshot: ReservedSnapshot | nul
   return snapshot.people.find((person) => person.fingerprint === fingerprint) ?? null
 }
 
-/**
- * Entra chi sta in «Persone della Riservata» con almeno un ruolo: Direttivo, Coordinamento (i rappresentanti),
- * segreteria, chi cura la Bussola.
- */
-export const canEnter = (person: ReservedPerson | null) => (person?.roles.length ?? 0) > 0
+/** Chi entra: la regola sta in `@bussola/condiviso`, perché la usa anche il seed dell'anteprima. */
+export { canEnter } from '@bussola/condiviso'
+
+/** Il GdL del rappresentante: i suoi tasti («Aggiorna il tuo gruppo», «Aggiungi un incontro») stanno su pages.dev. */
+export const repGroupId = (person: ReservedPerson | null) => (person?.roles.includes('rep') ? person.groupId : null)
 
 /** L'istantanea riservata da KV; null se non c'è o non ha la forma giusta. */
 export async function loadReserved(kv: KVNamespace): Promise<ReservedSnapshot | null> {
   try {
     return parseReservedSnapshot(await kv.get(RESERVED_KEY, 'json'))
+  } catch {
+    return null
+  }
+}
+
+/** L'istantanea del sito da KV; null se non c'è o non ha la forma giusta. */
+export async function loadSite(kv: KVNamespace): Promise<SiteSnapshot | null> {
+  try {
+    return parseSiteSnapshot(await kv.get(SITE_KEY, 'json'))
+  } catch {
+    return null
+  }
+}
+
+/** L'istantanea dei soci da KV, i soli numeri (da T4); null se non c'è o non ha la forma giusta. */
+export async function loadMembers(kv: KVNamespace): Promise<MembersSnapshot | null> {
+  try {
+    return parseMembersSnapshot(await kv.get(MEMBERS_KEY, 'json'))
   } catch {
     return null
   }

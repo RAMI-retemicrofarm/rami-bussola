@@ -13,6 +13,10 @@
 // - non in regola (2): 4 Donati (solo il 2024), 17 Riva (nessun pagamento: è un nuovo socio, ammesso il 30/10/2026);
 // - soci non receduti: 11 + 2 + 4 + 2 = 19, su 20 righe.
 // 30 pagamenti: 29 con un socio, più P-2026-0015 senza socio («Da abbinare»). Il prossimo numero è P-2026-0016.
+// I contanti incassati dal tesoriere sono già «ricevuti»; da consegnare restano P-2026-0003 (Luisa) e P-2026-0007
+// (la part-time, in attesa del tesoriere): 60 €. L'ultima registrazione è P-2026-0007, del 30/10.
+// «Estratto conto»: quattro righe, tre abbinate (per riferimento a P-2026-0014 e P-2026-0015, per «socio n. 7» a
+// P-2026-0004) e una senza registrazione («quota Verdi»): in «Da abbinare» quella e P-2026-0015, che è senza socio.
 import { DEMO_EMAILS } from './demo.ts'
 import { OFFICE_SETTINGS, SOCI_SHEETS } from './members.ts'
 
@@ -43,7 +47,7 @@ export const DEMO_INSTRUCTIONS_URL = 'https://docs.google.com/document/d/demo-is
 const row = (columns: readonly string[], values: Record<string, unknown>) => columns.map((name) => values[name] ?? '')
 
 export function demoSociSheets(): Record<string, unknown[][]> {
-  const { members, payments, access, accessLog, privacyLog, settings } = SOCI_SHEETS
+  const { members, payments, access, accessLog, bank, privacyLog, settings } = SOCI_SHEETS
   const member = (
     numero: number,
     cognome: string,
@@ -67,7 +71,7 @@ export function demoSociSheets(): Record<string, unknown[][]> {
       importo: 30,
       data,
       modo: 'bonifico',
-      riferimento: id.replace(/\D/g, '').slice(-4),
+      riferimento: id.replace(/\D/g, '').slice(-5),
       'registrato da': DEMO_OFFICE.treasurer,
       account: DEMO_SHARED_ACCOUNT,
       'registrato il': data,
@@ -76,6 +80,8 @@ export function demoSociSheets(): Record<string, unknown[][]> {
     })
   const bySecretary = { 'registrato da': DEMO_OFFICE.secretary, account: DEMO_EMAILS.office }
   const cash = (who: string) => ({ modo: 'contanti', riferimento: '', 'chi incassa': who })
+  /** I contanti incassati dal tesoriere, che può confermare: nascono già ricevuti. */
+  const treasurerCash = (data: string) => ({ ...cash(DEMO_OFFICE.treasurer), 'contanti ricevuti il': data })
 
   return {
     [members.name]: [
@@ -115,7 +121,7 @@ export function demoSociSheets(): Record<string, unknown[][]> {
       payment('P-2025-0007', 19, 2025, '2025-03-30'),
       payment('P-2025-0008', 20, 2025, '2025-04-11'),
       payment('P-2025-0009', 3, 2025, '2025-05-05'),
-      payment('P-2025-0010', 6, 2025, '2025-06-21', cash(DEMO_OFFICE.treasurer)),
+      payment('P-2025-0010', 6, 2025, '2025-06-21', treasurerCash('2025-06-21')),
       // Le quote venute dal libro soci con la migrazione: senza data, senza chi le ha registrate.
       payment('L-2026-0001', 11, 2026, '', {
         modo: 'libro soci',
@@ -138,7 +144,7 @@ export function demoSociSheets(): Record<string, unknown[][]> {
       payment('P-2026-0003', 6, 2026, '2026-05-23', cash('Luisa al banchetto del raduno')),
       // Due nuovi soci dopo il 15/10: la quota vale per il 2027.
       payment('P-2026-0004', 7, 2027, '2026-10-20', bySecretary),
-      payment('P-2026-0005', 8, 2027, '2026-10-28', cash(DEMO_OFFICE.treasurer)),
+      payment('P-2026-0005', 8, 2027, '2026-10-28', treasurerCash('2026-10-28')),
       payment('P-2026-0006', 9, 2026, '2026-03-04', {
         stato: 'annullato',
         'motivo o nota': 'Annullato il 10/03/2026 da Ugo Bassi: il bonifico era stato restituito',
@@ -150,14 +156,14 @@ export function demoSociSheets(): Record<string, unknown[][]> {
       }),
       // Un bonifico di 60 € per due quote: stesso riferimento, soci diversi, non è un doppione.
       payment('P-2026-0008', 13, 2026, '2026-02-20', {
-        riferimento: '5501',
+        riferimento: '55001',
         'motivo o nota': 'bonifico di 60 € per due quote',
       }),
       payment('P-2026-0009', 14, 2026, '2026-02-20', {
-        riferimento: '5501',
+        riferimento: '55001',
         'motivo o nota': 'bonifico di 60 € per due quote',
       }),
-      payment('P-2026-0010', 15, 2026, '2026-05-23', cash(DEMO_OFFICE.treasurer)),
+      payment('P-2026-0010', 15, 2026, '2026-05-23', treasurerCash('2026-05-23')),
       payment('P-2026-0011', 16, 2026, '2026-04-02', bySecretary),
       payment('P-2026-0012', 16, 2027, '2026-04-02', { ...bySecretary, 'motivo o nota': 'quota di due anni' }),
       payment('P-2026-0013', 19, 2026, '2026-03-15'),
@@ -176,6 +182,13 @@ export function demoSociSheets(): Record<string, unknown[][]> {
       [...accessLog.columns],
       [new Date('2026-10-05T08:12:00Z'), DEMO_EMAILS.office, 'D5', 'sì', 'no'],
       [new Date('2026-10-26T15:40:00Z'), DEMO_EMAILS.office, 'A4:F4', '', 'Ugo Bassi · ' + DEMO_SHARED_ACCOUNT],
+    ],
+    [bank.name]: [
+      [...bank.columns],
+      ['2026-10-20', 30, 'Bonifico da VILLA IRENE Quota RAMI 2026 socio n. 20', 'TRN 60014', '', ''],
+      ['2026-10-21', 30, 'Quota RAMI 2027 socio n. 7', 'TRN 77001', '', ''],
+      ['2026-10-25', 30, 'quota Rossi', 'TRN 60015', '', ''],
+      ['2026-11-02', 30, 'quota Verdi', 'TRN 90210', '', ''],
     ],
     [privacyLog.name]: [[...privacyLog.columns]],
     [settings.name]: [

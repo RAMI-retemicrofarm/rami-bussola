@@ -1,20 +1,20 @@
 // Chi può lanciare le funzioni globali del motore. La pagina della segreteria gira «Esegui come: io» per chiunque nel
-// dominio, e con `google.script.run` chiunque l'apra può chiamare ogni globale come segreteria@: tutte, tranne doGet e
-// le office* (che rifanno il controllo di «Accessi»), passano da qui.
+// dominio, e con `google.script.run` chiunque l'apra può chiamare ogni globale come l'account della Bussola (ADR 0004):
+// tutte, tranne doGet e le office* (che rifanno il controllo di «Accessi»), passano da qui.
 import { normalizeEmail } from '@bussola/condiviso'
 
 /** Gli account e i trigger del progetto, da Session e ScriptApp. */
 export type Callers = {
   /** Chi lancia: dall'editor è chi l'ha aperto, da `google.script.run` chi usa la pagina. */
   activeEmail(): string
-  /** Come chi gira lo script: segreteria@. */
+  /** Come chi gira lo script: l'account della Bussola. */
   effectiveEmail(): string
   /** Gli id dei trigger del progetto, `getUniqueId()`. */
   triggerIds(): string[]
 }
 
 export const CALLER_REFUSED =
-  'Questa funzione la lancia solo il motore, o chi cura la Bussola dall’editor con l’account della segreteria.'
+  'Questa funzione la lancia solo il motore, o chi cura la Bussola dall’editor, entrato con l’account della Bussola.'
 
 /** Dall'editor: chi lancia è l'account che fa girare lo script. Un account vuoto non passa. */
 export function editorOnly(callers: Callers): void {

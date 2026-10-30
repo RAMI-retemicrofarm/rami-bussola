@@ -19,7 +19,9 @@ import {
   type TableRow,
   type ToCalendarDate,
 } from './content.ts'
+import { readBankAmount } from './bank.ts'
 import type { OfficeMember, OfficePayment } from './office-api.ts'
+import type { BankLine } from './reconcile.ts'
 
 const sheet = (name: string, columns: readonly string[], required: readonly string[] = columns): SheetSpec => ({
   name,
@@ -27,7 +29,7 @@ const sheet = (name: string, columns: readonly string[], required: readonly stri
   required,
 })
 
-/** Le schede, nell'ordine in cui le crea `setupSoci`. Estratto conto, Link personali e Invii arrivano con T4, T9, T5. */
+/** Le schede, nell'ordine in cui le crea `setupSoci`. Link personali e Invii arrivano con T9 e T5. */
 export const SOCI_SHEETS = {
   members: sheet(
     'Soci',
@@ -61,6 +63,8 @@ export const SOCI_SHEETS = {
     'può confermare pagamenti',
   ]),
   accessLog: sheet('Registro di Accessi', ['quando', 'chi', 'quali celle', 'valore prima', 'valore dopo']),
+  /** Da T4: le righe della banca, incollate o importate dal CSV; «abbinato a» e «ignorato perché» li scrive il motore. */
+  bank: sheet('Estratto conto', ['data', 'importo', 'causale', 'riferimento', 'abbinato a', 'ignorato perché']),
   privacyLog: sheet('Registro privacy', ['data', 'tipo', 'socio o fatto', 'cosa si è fatto', 'chiuso il'], []),
   settings: sheet('Impostazioni della segreteria', ['voce', 'valore', 'nota'], ['voce', 'valore']),
 } as const
@@ -74,6 +78,11 @@ export const PAYMENT_STATUS_WORDS = {
 } as const
 export const MEMBER_TYPE_WORDS = { producer: 'professionista', supporter: 'sostenitore' } as const
 export const ACCESS_ROLES = ['segretario', 'segreteria part-time', 'tesoriere'] as const
+/**
+ * L'indirizzo della segreteria di RAMI. Il motore gira con l'account della Bussola (ADR 0004): le mail ai soci hanno
+ * qui il «rispondi a», e il controllo delle condivisioni lo ammette come il proprietario.
+ */
+export const OFFICE_ADDRESS = 'segreteria@retemicrofarm.it'
 export type AccessRole = (typeof ACCESS_ROLES)[number]
 export const PRIVACY_KINDS = ['richiesta', 'violazione'] as const
 
@@ -87,7 +96,7 @@ export const OFFICE_SETTINGS = {
   graceUntil: { voce: 'fine della grazia', partenza: '31/3' },
   amount: { voce: 'importo della quota', partenza: 30 },
   iban: { voce: 'IBAN', partenza: '' },
-  reason: { voce: 'causale', partenza: 'Quota RAMI <anno> socio n. <numero>' },
+  reason: { voce: 'causale', partenza: 'tesseramento socio <anno> n. <numero>' },
   cashReceipt: { voce: 'per i contanti, la mail fa da ricevuta', partenza: 'sì' },
   instructions: { voce: 'link alle Istruzioni della segreteria', partenza: '' },
   /** Si ripete, una riga per voce fissa: la mail nel valore, il motivo nella nota. */
@@ -244,7 +253,11 @@ function rowDate(table: Table, row: TableRow, column: string, toCalendarDate: To
   return value ?? ''
 }
 
-export type MemberRow = Omit<OfficeMember, 'status' | 'payments'> & { index: number }
+export type MemberRow = Omit<OfficeMember, 'status' | 'payments'> & {
+  index: number
+  /** La «delibera» di ammissione, per il libro soci nel Drive. */
+  resolution: string
+}
 
 const MEMBER_TYPES: Record<string, OfficeMember['type']> = {
   [MEMBER_TYPE_WORDS.producer]: 'producer',
@@ -270,6 +283,7 @@ export function readMembers(table: Table, toCalendarDate: ToCalendarDate): Membe
       phone: text(row.get('telefono')),
       type: MEMBER_TYPES[normalize(text(row.get('tipo')))] ?? '',
       admittedOn: rowDate(table, row, 'ammesso il', toCalendarDate),
+      resolution: text(row.get('delibera')),
       leftOn: rowDate(table, row, 'receduto il', toCalendarDate),
     })
   }
@@ -346,4 +360,28 @@ export function readPayments(table: Table, toCalendarDate: ToCalendarDate): Paym
       requestKey: text(row.get('chiave della registrazione')),
     }
   })
+}
+
+/**
+ * Le righe di «Estratto conto», senza fermarsi: una data o un importo che non si leggono restano vuoti, e
+ * l'abbinamento dice il perché. Una riga vuota di data, importo, causale e riferimento non c'è.
+ */
+export function readBankLines(table: Table, toCalendarDate: ToCalendarDate): BankLine[] {
+  const lines: BankLine[] = []
+  for (const row of table.rows) {
+    const date = readCalendarDate(row.get('data'), toCalendarDate)
+    const amountCell = row.get('importo')
+    const amount = typeof amountCell === 'number' ? amountCell : readBankAmount(text(amountCell))
+    const line: BankLine = {
+      index: row.index,
+      date: date || '',
+      amount: Number.isFinite(amount) ? amount : null,
+      reason: text(row.get('causale')),
+      reference: text(row.get('riferimento')),
+      matchedTo: text(row.get('abbinato a')),
+      ignoredWhy: text(row.get('ignorato perché')),
+    }
+    if (line.date || line.amount !== null || line.reason || line.reference) lines.push(line)
+  }
+  return lines
 }
